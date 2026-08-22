@@ -12,16 +12,6 @@ RevAudit investigates variation and consistency in code-review practices across 
 
 The project analyzes pull-request and reviewer activity to study reviewer workload, review consistency, and systematic differences between repositories and reviewers.
 
-## Team
-
-| Member | Roll No. | Role |
-|---|---|---|
-| Dheeraj Kumar | 1024170136 | Team Lead & Architecture |
-| Vaibhav Goyal | 1024170002 | Backend & Statistical Modeling |
-| Adityaraj Singh | 1024170148 | Frontend & Visualizations |
-| Sparsh Khandelwal | 1024170139 | Data Pipeline & Documentation |
-
-**Instructor:** Dr. Sukhpal Singh
 
 ## Website
 
