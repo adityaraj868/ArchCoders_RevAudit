@@ -1,0 +1,126 @@
+@import "tailwindcss";
+
+@theme {
+  --font-press-start: "Press Start 2P", system-ui;
+  --font-vt323: "VT323", monospace;
+  --font-silkscreen: "Silkscreen", system-ui;
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-mono: "Share Tech Mono", monospace;
+}
+
+/* Custom retro styling */
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background-color: #05050d;
+  color: #fdfdcb;
+}
+
+/* Pixel art borders, arcade cards, arcade buttons */
+.arcade-card {
+  background-color: #0c0c1e;
+  border: 3px double #2121de;
+  box-shadow: 0 0 10px rgba(33, 33, 222, 0.2);
+}
+
+.arcade-card-red {
+  background-color: #0c0c1e;
+  border: 3px double #ff0000;
+  box-shadow: 0 0 10px rgba(255, 0, 0, 0.2);
+}
+
+.arcade-card-pink {
+  background-color: #0c0c1e;
+  border: 3px double #ffb8de;
+  box-shadow: 0 0 10px rgba(255, 184, 222, 0.2);
+}
+
+.arcade-card-cyan {
+  background-color: #0c0c1e;
+  border: 3px double #00ffff;
+  box-shadow: 0 0 10px rgba(0, 255, 255, 0.2);
+}
+
+.arcade-card-orange {
+  background-color: #0c0c1e;
+  border: 3px double #ffb847;
+  box-shadow: 0 0 10px rgba(255, 184, 71, 0.2);
+}
+
+.arcade-btn {
+  font-family: "Press Start 2P", system-ui;
+  font-size: 0.75rem;
+  padding: 0.75rem 1.25rem;
+  background-color: #0c0c1e;
+  border: 2px solid #2121de;
+  color: #ffeb3b;
+  text-transform: uppercase;
+  transition: all 0.15s steps(4);
+  box-shadow: 4px 4px 0 #000, 6px 6px 0 #2121de;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.arcade-btn:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 #000, 8px 8px 0 #00ffff;
+  color: #ffffff;
+  border-color: #00ffff;
+}
+
+.arcade-btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 2px 2px 0 #000, 3px 3px 0 #2121de;
+}
+
+/* CRT Scanline Effect */
+.crt-screen {
+  position: relative;
+  overflow: hidden;
+}
+
+.crt-screen::before {
+  content: " ";
+  display: block;
+  position: absolute;
+  top: 0; left: 0; bottom: 0; right: 0;
+  background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+  z-index: 2;
+  background-size: 100% 4px, 6px 100%;
+  pointer-events: none;
+}
+
+/* Custom animation for data pipeline flow */
+@keyframes flow {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(200%);
+  }
+}
+
+.animate-flow-pellet {
+  animation: flow 3s linear infinite;
+}
+
+/* Custom pixel-dot background grid */
+.bg-pixel-grid {
+  background-image: radial-gradient(rgba(33, 33, 222, 0.1) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+/* Pac-Man Retro Chomp scale animation */
+@keyframes chomp {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.18);
+  }
+}
+
+.animate-chomp {
+  animation: chomp 0.4s steps(4) infinite;
+}
