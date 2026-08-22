@@ -1,26 +1,38 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  ArrowRight, 
-  ArrowLeft, 
-  Terminal, 
-  Database, 
-  Cpu, 
-  Server, 
-  Layout, 
-  Play, 
-  FolderUp, 
-  Check, 
-  AlertTriangle, 
-  Menu, 
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  ArrowRight,
+  ArrowLeft,
+  Terminal,
+  Database,
+  Cpu,
+  Server,
+  Layout,
+  Play,
+  FolderUp,
+  Check,
+  AlertTriangle,
+  Menu,
   X,
   FileCode,
   LineChart,
   HelpCircle,
   ShieldCheck,
   Binary,
-  Layers
+  Layers,
+  Loader2,
+  LogOut
 } from 'lucide-react';
 import { PacmanIcon, GhostIcon, PelletIcon, GithubIcon } from './components/PixelArt';
+import { login, getCurrentUser, logout, type AuthUser } from './api/auth';
+import { getToken } from './api/client';
+import {
+  listPresentations,
+  createPresentation,
+  publishPresentation,
+  type Presentation,
+} from './api/presentations';
+import { uploadFiles } from './api/files';
+import { getDashboard, type AdminDashboard } from './api/admin';
 
 // ----------------------------------------------------
 // PROJECT CURRENT PHASE CONFIGURATION
@@ -1059,6 +1071,31 @@ function TeamPage() {
 // 4. PRESENTATIONS ARCHIVE PAGE COMPONENT
 // ----------------------------------------------------
 function PresentationsPage({ navigateTo }: { navigateTo: (route: Route) => void }) {
+  const [presentations, setPresentations] = useState<Presentation[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    listPresentations()
+      .then((data) => {
+        if (!cancelled) setPresentations(data);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load the archive');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <div className="space-y-12">
       <div className="border-b-4 border-[#2121de] pb-4">
@@ -1079,7 +1116,10 @@ function PresentationsPage({ navigateTo }: { navigateTo: (route: Route) => void 
               </tr>
             </thead>
             <tbody>
-              {/* Row 1: Published */}
+              {/* Row 1 is pinned: the graded Planning Presentation v1.0 lives
+                  in-app as a native slide viewer (see PlanningPresentationView),
+                  not as an uploaded file in the backend archive, and must
+                  remain reachable regardless of what's in the database. */}
               <tr className="border-b border-[#2121de]/60 hover:bg-[#2121de]/10 transition-colors">
                 <td className="p-4 font-press-start text-xs text-[#ff0000]">01</td>
                 <td className="p-4 font-sans text-sm font-semibold text-white">
@@ -1091,7 +1131,7 @@ function PresentationsPage({ navigateTo }: { navigateTo: (route: Route) => void 
                 <td className="p-4 font-press-start text-[10px]">1.0</td>
                 <td className="p-4 text-[#fdfdcb]/80">August 22, 2026</td>
                 <td className="p-4 text-center">
-                  <button 
+                  <button
                     onClick={() => navigateTo('planning-v1')}
                     className="px-3 py-1.5 border border-[#ffeb3b] text-[#ffeb3b] hover:bg-[#ffeb3b] hover:text-[#05050d] font-press-start text-[9px] tracking-wider transition-colors cursor-pointer"
                   >
@@ -1100,37 +1140,51 @@ function PresentationsPage({ navigateTo }: { navigateTo: (route: Route) => void 
                 </td>
               </tr>
 
-              {/* Row 2: Future placeholders */}
-              <tr className="border-b border-[#2121de]/60 text-[#6b7280]">
-                <td className="p-4 font-press-start text-xs">02</td>
-                <td className="p-4 font-sans text-sm">
-                  Mid-term Progress Review
-                  <span className="block font-vt323 text-xs text-[#6b7280] mt-1">
-                    Database validation and preliminary modeling outputs
-                  </span>
-                </td>
-                <td className="p-4 font-press-start text-[10px]">—</td>
-                <td className="p-4">—</td>
-                <td className="p-4 text-center font-press-start text-[8px] text-[#6b7280] border border-dashed border-[#6b7280]/20 bg-[#0c0c1e]/40">
-                  LOCKED
-                </td>
-              </tr>
+              {/* Rows 2+: real published versions from the backend archive */}
+              {loading && (
+                <tr>
+                  <td colSpan={5} className="p-6 text-center font-press-start text-[10px] text-[#6b7280] animate-pulse">
+                    LOADING ARCHIVE...
+                  </td>
+                </tr>
+              )}
 
-              {/* Row 3 */}
-              <tr className="text-[#6b7280]">
-                <td className="p-4 font-press-start text-xs">03</td>
-                <td className="p-4 font-sans text-sm">
-                  Final Project Evaluation
-                  <span className="block font-vt323 text-xs text-[#6b7280] mt-1">
-                    Evaluation results and interactive review dashboards
-                  </span>
-                </td>
-                <td className="p-4 font-press-start text-[10px]">—</td>
-                <td className="p-4">—</td>
-                <td className="p-4 text-center font-press-start text-[8px] text-[#6b7280] border border-dashed border-[#6b7280]/20 bg-[#0c0c1e]/40">
-                  LOCKED
-                </td>
-              </tr>
+              {!loading && error && (
+                <tr>
+                  <td colSpan={5} className="p-6 text-center font-press-start text-[10px] text-[#ff0000]">
+                    FAILED TO LOAD: {error}
+                  </td>
+                </tr>
+              )}
+
+              {!loading && !error && presentations.length === 0 && (
+                <tr className="text-[#6b7280]">
+                  <td colSpan={5} className="p-6 text-center font-press-start text-[10px]">
+                    NO ADDITIONAL RELEASES YET
+                  </td>
+                </tr>
+              )}
+
+              {!loading &&
+                !error &&
+                presentations.map((p, idx) => (
+                  <tr key={p.id} className="border-b border-[#2121de]/60 hover:bg-[#2121de]/10 transition-colors">
+                    <td className="p-4 font-press-start text-xs text-[#00ffff]">
+                      {String(idx + 2).padStart(2, '0')}
+                    </td>
+                    <td className="p-4 font-sans text-sm font-semibold text-white">
+                      {p.title}
+                      {p.changeSummary && (
+                        <span className="block font-vt323 text-xs text-[#6b7280] font-normal mt-1">
+                          {p.changeSummary}
+                        </span>
+                      )}
+                    </td>
+                    <td className="p-4 font-press-start text-[10px]">{p.version}</td>
+                    <td className="p-4 text-[#fdfdcb]/80">{p.date}</td>
+                    <td className="p-4 text-center font-press-start text-[8px] text-[#00ff00]">PUBLISHED</td>
+                  </tr>
+                ))}
             </tbody>
           </table>
         </div>
@@ -1541,75 +1595,175 @@ function ArchitecturePage() {
 type UploadState = 'READY' | 'UPLOADING' | 'PROCESSING' | 'UPLOADED' | 'PUBLISHED' | 'FAILED';
 
 function AdminPage() {
+  // Session
+  const [authChecking, setAuthChecking] = useState(true);
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+
+  // Login form
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [loginLoading, setLoginLoading] = useState(false);
+
+  // Dashboard
+  const [dashboard, setDashboard] = useState<AdminDashboard | null>(null);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
+
+  // Upload form + real (not simulated) publish flow
   const [uploadState, setUploadState] = useState<UploadState>('READY');
+  const [uploadStep, setUploadStep] = useState(0);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [publishedResult, setPublishedResult] = useState<Presentation | null>(null);
   const [title, setTitle] = useState('');
   const [version, setVersion] = useState('');
   const [releaseDate, setReleaseDate] = useState('');
+  const [authorsInput, setAuthorsInput] = useState('');
   const [changeSummary, setChangeSummary] = useState('');
-  const [simulatedProgress, setSimulatedProgress] = useState(0);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [dragActive, setDragActive] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const startSimulatedUpload = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!title || !version) {
-      alert("PLEASE ENTER TITLE AND VERSION.");
+  // Restore a session from a previously-stored token on mount/reload.
+  useEffect(() => {
+    if (!getToken()) {
+      setAuthChecking(false);
       return;
     }
-    
-    setUploadState('UPLOADING');
-    setSimulatedProgress(0);
+    getCurrentUser()
+      .then(setCurrentUser)
+      .catch(() => setCurrentUser(null))
+      .finally(() => setAuthChecking(false));
+  }, []);
+
+  // Load dashboard stats once logged in.
+  useEffect(() => {
+    if (!currentUser) return;
+    setDashboardError(null);
+    getDashboard()
+      .then(setDashboard)
+      .catch((err) => setDashboardError(err instanceof Error ? err.message : 'Failed to load dashboard'));
+  }, [currentUser]);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError(null);
+    setLoginLoading(true);
+    try {
+      const user = await login(loginEmail, loginPassword);
+      setCurrentUser(user);
+      setLoginPassword('');
+    } catch (err) {
+      setLoginError(err instanceof Error ? err.message : 'Login failed');
+    } finally {
+      setLoginLoading(false);
+    }
   };
 
-  // Run simulated progress timer
-  useEffect(() => {
-    if (uploadState === 'UPLOADING') {
-      const interval = setInterval(() => {
-        setSimulatedProgress((prev) => {
-          if (prev >= 100) {
-            clearInterval(interval);
-            setUploadState('PROCESSING');
-            return 100;
-          }
-          return prev + 10;
-        });
-      }, 200);
-      return () => clearInterval(interval);
+  const handleLogout = () => {
+    logout();
+    setCurrentUser(null);
+    setDashboard(null);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragActive(true);
+  };
+  const handleDragLeave = () => setDragActive(false);
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragActive(false);
+    setSelectedFiles(Array.from(e.dataTransfer.files));
+  };
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSelectedFiles(e.target.files ? Array.from(e.target.files) : []);
+  };
+
+  // Real three-step publish flow: create the version record, upload the
+  // file(s) onto it, then flip it to published. Nothing here is simulated —
+  // each step is an actual API call, and a failure at any step lands on
+  // FAILED with the real error message instead of continuing anyway.
+  const startUpload = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const authors = authorsInput
+      .split(',')
+      .map((a) => a.trim())
+      .filter(Boolean);
+
+    if (!title || !version || !releaseDate || authors.length === 0) {
+      setUploadError('Title, version, release date, and at least one author are required.');
+      setUploadState('FAILED');
+      return;
+    }
+    if (selectedFiles.length === 0) {
+      setUploadError('Select at least one file to upload.');
+      setUploadState('FAILED');
+      return;
     }
 
-    if (uploadState === 'PROCESSING') {
-      const timeout = setTimeout(() => {
-        setUploadState('UPLOADED');
-      }, 1000);
-      return () => clearTimeout(timeout);
-    }
+    setUploadError(null);
+    setUploadState('UPLOADING');
+    setUploadStep(1);
 
-    if (uploadState === 'UPLOADED') {
-      const timeout = setTimeout(() => {
-        setUploadState('PUBLISHED');
-      }, 1000);
-      return () => clearTimeout(timeout);
+    try {
+      const presentation = await createPresentation({
+        title,
+        version,
+        date: releaseDate,
+        authors,
+        changeSummary: changeSummary || undefined,
+      });
+
+      setUploadState('PROCESSING');
+      setUploadStep(2);
+      await uploadFiles(presentation.id, selectedFiles);
+
+      setUploadState('UPLOADED');
+      setUploadStep(3);
+      const published = await publishPresentation(presentation.id);
+
+      setPublishedResult(published);
+      setUploadState('PUBLISHED');
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Upload failed');
+      setUploadState('FAILED');
     }
-  }, [uploadState]);
+  };
 
   const resetForm = () => {
     setTitle('');
     setVersion('');
     setReleaseDate('');
+    setAuthorsInput('');
     setChangeSummary('');
+    setSelectedFiles([]);
     setUploadState('READY');
-    setSimulatedProgress(0);
+    setUploadStep(0);
+    setUploadError(null);
+    setPublishedResult(null);
   };
 
   return (
     <div className="space-y-12 max-w-2xl mx-auto">
-      <div className="border-b-4 border-[#00ffff] pb-4">
-        <h1 className="font-press-start text-2xl text-white">ADMIN PORTAL</h1>
-        <p className="font-vt323 text-xl text-[#6b7280] mt-1">Presentation publisher shell</p>
+      <div className="border-b-4 border-[#00ffff] pb-4 flex items-center justify-between gap-4">
+        <div>
+          <h1 className="font-press-start text-2xl text-white">ADMIN PORTAL</h1>
+          <p className="font-vt323 text-xl text-[#6b7280] mt-1">Presentation publisher shell</p>
+        </div>
+        {currentUser && (
+          <button
+            onClick={handleLogout}
+            className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 border border-[#6b7280] text-[#6b7280] hover:text-white hover:border-white font-press-start text-[9px] transition-colors"
+          >
+            <LogOut size={12} /> LOGOUT
+          </button>
+        )}
       </div>
 
       <div className="arcade-card bg-black p-4 md:p-6 font-mono text-xs border-2 border-[#00ffff] relative overflow-hidden">
         {/* Scanlines inside shell */}
         <div className="absolute inset-0 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.12)_50%)] bg-[length:100%_4px] pointer-events-none z-10"></div>
-        
+
         {/* Terminal Header */}
         <div className="flex items-center justify-between border-b border-[#00ffff]/30 pb-3 mb-4">
           <div className="flex items-center gap-2">
@@ -1622,142 +1776,272 @@ function AdminPage() {
           </span>
         </div>
 
-        {uploadState === 'READY' ? (
-          <form onSubmit={startSimulatedUpload} className="space-y-6 relative z-20">
-            <div className="text-[#00ffff] font-semibold mb-2">user@archcoders-admin:~$ upload</div>
-            
-            {/* Drag & drop mock area */}
-            <div className="border-2 border-dashed border-[#00ffff]/40 hover:border-[#00ffff] hover:bg-[#00ffff]/5 transition-all p-6 text-center cursor-pointer space-y-2">
-              <FolderUp className="mx-auto text-[#00ffff]" size={28} />
-              <div className="font-semibold text-white">DROP FILE / SLIDE DECK FOLDER HERE</div>
-              <div className="text-[10px] text-[#6b7280]">OR CLICK TO BROWSE LOCAL FILES</div>
-            </div>
+        {authChecking ? (
+          <div className="py-12 text-center text-[#00ffff] font-press-start text-xs animate-pulse relative z-20">
+            CHECKING SESSION...
+          </div>
+        ) : !currentUser ? (
+          <form onSubmit={handleLogin} className="space-y-6 relative z-20">
+            <div className="text-[#00ffff] font-semibold mb-2">user@archcoders-admin:~$ login</div>
 
             <div className="space-y-4">
               <div className="flex flex-col space-y-1">
-                <label className="text-[#00ffff] font-semibold uppercase text-[10px] font-press-start">TITLE</label>
-                <input 
-                  type="text" 
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="e.g. Planning Presentation v2" 
+                <label className="text-[#00ffff] font-semibold uppercase text-[10px] font-press-start">EMAIL</label>
+                <input
+                  type="email"
+                  value={loginEmail}
+                  onChange={(e) => setLoginEmail(e.target.value)}
+                  placeholder="admin@example.com"
                   className="bg-[#0c0c1e] border-2 border-[#2121de] px-3 py-2 text-[#fdfdcb] focus:outline-none focus:border-[#00ffff]"
                   required
                 />
               </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="flex flex-col space-y-1">
-                  <label className="text-[#00ffff] font-semibold uppercase text-[10px] font-press-start">VERSION</label>
-                  <input 
-                    type="text" 
-                    value={version}
-                    onChange={(e) => setVersion(e.target.value)}
-                    placeholder="e.g. 2.0" 
-                    className="bg-[#0c0c1e] border-2 border-[#2121de] px-3 py-2 text-[#fdfdcb] focus:outline-none focus:border-[#00ffff]"
-                    required
-                  />
-                </div>
-
-                <div className="flex flex-col space-y-1">
-                  <label className="text-[#00ffff] font-semibold uppercase text-[10px] font-press-start">RELEASE DATE</label>
-                  <input 
-                    type="text" 
-                    value={releaseDate}
-                    onChange={(e) => setReleaseDate(e.target.value)}
-                    placeholder="e.g. Sept 2026" 
-                    className="bg-[#0c0c1e] border-2 border-[#2121de] px-3 py-2 text-[#fdfdcb] focus:outline-none focus:border-[#00ffff]"
-                  />
-                </div>
-              </div>
-
               <div className="flex flex-col space-y-1">
-                <label className="text-[#00ffff] font-semibold uppercase text-[10px] font-press-start">CHANGE SUMMARY</label>
-                <textarea 
-                  value={changeSummary}
-                  onChange={(e) => setChangeSummary(e.target.value)}
-                  placeholder="Summarize changes and model revisions..." 
-                  className="bg-[#0c0c1e] border-2 border-[#2121de] px-3 py-2 text-[#fdfdcb] h-20 resize-none focus:outline-none focus:border-[#00ffff]"
+                <label className="text-[#00ffff] font-semibold uppercase text-[10px] font-press-start">PASSWORD</label>
+                <input
+                  type="password"
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="bg-[#0c0c1e] border-2 border-[#2121de] px-3 py-2 text-[#fdfdcb] focus:outline-none focus:border-[#00ffff]"
+                  required
                 />
               </div>
             </div>
 
-            <div className="flex justify-end gap-4 pt-2">
-              <button 
-                type="submit" 
-                className="px-4 py-2 border-2 border-[#00ffff] text-[#00ffff] hover:bg-[#00ffff] hover:text-black font-press-start text-[9px] tracking-wider transition-colors cursor-pointer"
+            {loginError && (
+              <div className="flex items-start gap-2 text-[#ff0000] text-[10px] border border-[#ff0000]/40 bg-[#ff0000]/5 p-3">
+                <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
+                <span>{loginError}</span>
+              </div>
+            )}
+
+            <div className="flex justify-end pt-2">
+              <button
+                type="submit"
+                disabled={loginLoading}
+                className="flex items-center gap-2 px-4 py-2 border-2 border-[#00ffff] text-[#00ffff] hover:bg-[#00ffff] hover:text-black font-press-start text-[9px] tracking-wider transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                UPLOAD & PUBLISH
+                {loginLoading && <Loader2 size={12} className="animate-spin" />}
+                {loginLoading ? 'AUTHENTICATING...' : 'LOGIN'}
               </button>
             </div>
           </form>
         ) : (
-          <div className="py-12 flex flex-col items-center justify-center space-y-6 relative z-20 text-center">
-            {uploadState === 'UPLOADING' && (
-              <>
-                <div className="text-[#00ffff] font-press-start text-xs animate-pulse">UPLOADING ASSETS...</div>
-                <div className="w-64 bg-[#0c0c1e] border-2 border-[#2121de] h-4 relative">
-                  <div 
-                    className="bg-[#00ffff] h-full transition-all duration-200" 
-                    style={{ width: `${simulatedProgress}%` }}
-                  ></div>
-                </div>
-                <div className="text-[10px] text-[#6b7280]">{simulatedProgress}% COMPLETE</div>
-              </>
-            )}
-
-            {uploadState === 'PROCESSING' && (
-              <>
-                <div className="text-[#ffeb3b] font-press-start text-xs animate-bounce">PROCESSING METADATA...</div>
-                <p className="text-[10px] text-[#6b7280]">Running validation pipelines against S3 storage targets</p>
-              </>
-            )}
-
-            {uploadState === 'UPLOADED' && (
-              <>
-                <div className="text-[#00ff00] font-press-start text-xs">UPLOAD COMPLETED</div>
-                <p className="text-[10px] text-[#6b7280]">Recording database version entries</p>
-              </>
-            )}
-
-            {uploadState === 'PUBLISHED' && (
-              <div className="space-y-4">
-                <div className="flex justify-center">
-                  <div className="w-12 h-12 rounded-full border-4 border-[#00ff00] flex items-center justify-center text-[#00ff00] animate-scale">
-                    <Check size={24} />
+          <div className="space-y-8 relative z-20">
+            {/* Dashboard */}
+            <div>
+              <div className="text-[#00ffff] font-semibold mb-3">user@archcoders-admin:~$ dashboard</div>
+              {dashboardError ? (
+                <div className="text-[#ff0000] text-[10px]">FAILED TO LOAD DASHBOARD: {dashboardError}</div>
+              ) : !dashboard ? (
+                <div className="text-[#6b7280] text-[10px] animate-pulse">LOADING STATS...</div>
+              ) : (
+                <div className="grid grid-cols-3 gap-3 font-press-start text-center">
+                  <div className="border border-[#2121de] p-3">
+                    <div className="text-lg text-white">{dashboard.presentations.total}</div>
+                    <div className="text-[8px] text-[#6b7280] mt-1">TOTAL</div>
+                  </div>
+                  <div className="border border-[#00ff00]/50 p-3">
+                    <div className="text-lg text-[#00ff00]">{dashboard.presentations.published}</div>
+                    <div className="text-[8px] text-[#6b7280] mt-1">PUBLISHED</div>
+                  </div>
+                  <div className="border border-[#ffeb3b]/50 p-3">
+                    <div className="text-lg text-[#ffeb3b]">{dashboard.presentations.draft}</div>
+                    <div className="text-[8px] text-[#6b7280] mt-1">DRAFT</div>
                   </div>
                 </div>
-                <div className="text-[#00ff00] font-press-start text-xs">DECK SUCCESSFULLY PUBLISHED!</div>
-                
-                <div className="arcade-card p-4 border-dashed max-w-sm mx-auto text-left space-y-2">
-                  <div className="text-[9px] text-[#6b7280] font-press-start">VERSION INFO</div>
-                  <div><strong className="text-white">Title:</strong> {title}</div>
-                  <div><strong className="text-white">Version:</strong> {version}</div>
-                  <div><strong className="text-white">Date:</strong> {releaseDate || 'Aug 2026'}</div>
-                  <div className="text-[10px] text-[#6b7280] leading-relaxed">{changeSummary}</div>
-                </div>
+              )}
+            </div>
 
-                <div className="pt-4 flex gap-4 justify-center">
-                  <button 
-                    onClick={resetForm}
-                    className="px-3 py-1.5 border border-[#00ffff] text-[#00ffff] hover:bg-[#00ffff] hover:text-black font-press-start text-[9px] transition-colors"
+            <div className="border-t border-[#00ffff]/20 pt-6">
+              {uploadState === 'READY' && (
+                <form onSubmit={startUpload} className="space-y-6">
+                  <div className="text-[#00ffff] font-semibold mb-2">user@archcoders-admin:~$ upload</div>
+
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    onChange={handleFileInputChange}
+                    accept=".pdf,.ppt,.pptx,.zip,.png,.jpg,.jpeg,.svg"
+                    className="hidden"
+                  />
+                  <div
+                    onClick={() => fileInputRef.current?.click()}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    className={`border-2 border-dashed transition-all p-6 text-center cursor-pointer space-y-2 ${
+                      dragActive
+                        ? 'border-[#00ffff] bg-[#00ffff]/10'
+                        : 'border-[#00ffff]/40 hover:border-[#00ffff] hover:bg-[#00ffff]/5'
+                    }`}
                   >
-                    UPLOAD ANOTHER
-                  </button>
+                    <FolderUp className="mx-auto text-[#00ffff]" size={28} />
+                    <div className="font-semibold text-white">DROP FILE / SLIDE DECK FOLDER HERE</div>
+                    <div className="text-[10px] text-[#6b7280]">OR CLICK TO BROWSE LOCAL FILES</div>
+                    {selectedFiles.length > 0 && (
+                      <div className="text-[10px] text-[#00ff00] pt-2 break-words">
+                        {selectedFiles.length} FILE{selectedFiles.length > 1 ? 'S' : ''} SELECTED:{' '}
+                        {selectedFiles.map((f) => f.name).join(', ')}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="flex flex-col space-y-1">
+                      <label className="text-[#00ffff] font-semibold uppercase text-[10px] font-press-start">TITLE</label>
+                      <input
+                        type="text"
+                        value={title}
+                        onChange={(e) => setTitle(e.target.value)}
+                        placeholder="e.g. Planning Presentation v2"
+                        className="bg-[#0c0c1e] border-2 border-[#2121de] px-3 py-2 text-[#fdfdcb] focus:outline-none focus:border-[#00ffff]"
+                        required
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="flex flex-col space-y-1">
+                        <label className="text-[#00ffff] font-semibold uppercase text-[10px] font-press-start">VERSION</label>
+                        <input
+                          type="text"
+                          value={version}
+                          onChange={(e) => setVersion(e.target.value)}
+                          placeholder="e.g. 2.0"
+                          className="bg-[#0c0c1e] border-2 border-[#2121de] px-3 py-2 text-[#fdfdcb] focus:outline-none focus:border-[#00ffff]"
+                          required
+                        />
+                      </div>
+
+                      <div className="flex flex-col space-y-1">
+                        <label className="text-[#00ffff] font-semibold uppercase text-[10px] font-press-start">RELEASE DATE</label>
+                        <input
+                          type="date"
+                          value={releaseDate}
+                          onChange={(e) => setReleaseDate(e.target.value)}
+                          className="bg-[#0c0c1e] border-2 border-[#2121de] px-3 py-2 text-[#fdfdcb] focus:outline-none focus:border-[#00ffff]"
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col space-y-1">
+                      <label className="text-[#00ffff] font-semibold uppercase text-[10px] font-press-start">AUTHORS</label>
+                      <input
+                        type="text"
+                        value={authorsInput}
+                        onChange={(e) => setAuthorsInput(e.target.value)}
+                        placeholder="e.g. Dheeraj Kumar, Vaibhav Goyal"
+                        className="bg-[#0c0c1e] border-2 border-[#2121de] px-3 py-2 text-[#fdfdcb] focus:outline-none focus:border-[#00ffff]"
+                        required
+                      />
+                      <span className="text-[9px] text-[#6b7280]">Comma-separated</span>
+                    </div>
+
+                    <div className="flex flex-col space-y-1">
+                      <label className="text-[#00ffff] font-semibold uppercase text-[10px] font-press-start">CHANGE SUMMARY</label>
+                      <textarea
+                        value={changeSummary}
+                        onChange={(e) => setChangeSummary(e.target.value)}
+                        placeholder="Summarize changes and model revisions..."
+                        className="bg-[#0c0c1e] border-2 border-[#2121de] px-3 py-2 text-[#fdfdcb] h-20 resize-none focus:outline-none focus:border-[#00ffff]"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-4 pt-2">
+                    <button
+                      type="submit"
+                      className="px-4 py-2 border-2 border-[#00ffff] text-[#00ffff] hover:bg-[#00ffff] hover:text-black font-press-start text-[9px] tracking-wider transition-colors cursor-pointer"
+                    >
+                      UPLOAD & PUBLISH
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {uploadState !== 'READY' && (
+                <div className="py-12 flex flex-col items-center justify-center space-y-6 text-center">
+                  {(uploadState === 'UPLOADING' || uploadState === 'PROCESSING' || uploadState === 'UPLOADED') && (
+                    <>
+                      <div className="text-[#00ffff] font-press-start text-xs animate-pulse">
+                        {uploadState === 'UPLOADING' && 'CREATING PRESENTATION RECORD...'}
+                        {uploadState === 'PROCESSING' && 'UPLOADING FILES...'}
+                        {uploadState === 'UPLOADED' && 'PUBLISHING...'}
+                      </div>
+                      <div className="w-64 bg-[#0c0c1e] border-2 border-[#2121de] h-4 relative">
+                        <div
+                          className="bg-[#00ffff] h-full transition-all duration-300"
+                          style={{ width: `${(uploadStep / 3) * 100}%` }}
+                        ></div>
+                      </div>
+                      <div className="text-[10px] text-[#6b7280]">STEP {uploadStep} OF 3</div>
+                    </>
+                  )}
+
+                  {uploadState === 'PUBLISHED' && publishedResult && (
+                    <div className="space-y-4">
+                      <div className="flex justify-center">
+                        <div className="w-12 h-12 rounded-full border-4 border-[#00ff00] flex items-center justify-center text-[#00ff00] animate-scale">
+                          <Check size={24} />
+                        </div>
+                      </div>
+                      <div className="text-[#00ff00] font-press-start text-xs">DECK SUCCESSFULLY PUBLISHED!</div>
+
+                      <div className="arcade-card p-4 border-dashed max-w-sm mx-auto text-left space-y-2">
+                        <div className="text-[9px] text-[#6b7280] font-press-start">VERSION INFO</div>
+                        <div><strong className="text-white">Title:</strong> {publishedResult.title}</div>
+                        <div><strong className="text-white">Version:</strong> {publishedResult.version}</div>
+                        <div><strong className="text-white">Date:</strong> {publishedResult.date}</div>
+                        {publishedResult.changeSummary && (
+                          <div className="text-[10px] text-[#6b7280] leading-relaxed">{publishedResult.changeSummary}</div>
+                        )}
+                      </div>
+
+                      <div className="pt-4 flex gap-4 justify-center">
+                        <button
+                          onClick={resetForm}
+                          className="px-3 py-1.5 border border-[#00ffff] text-[#00ffff] hover:bg-[#00ffff] hover:text-black font-press-start text-[9px] transition-colors"
+                        >
+                          UPLOAD ANOTHER
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {uploadState === 'FAILED' && (
+                    <div className="space-y-4">
+                      <div className="flex justify-center">
+                        <AlertTriangle size={36} className="text-[#ff0000]" />
+                      </div>
+                      <div className="text-[#ff0000] font-press-start text-xs">UPLOAD FAILED</div>
+                      {uploadError && <p className="text-[10px] text-[#6b7280] max-w-sm mx-auto">{uploadError}</p>}
+                      <div className="pt-2 flex gap-4 justify-center">
+                        <button
+                          onClick={() => setUploadState('READY')}
+                          className="px-3 py-1.5 border border-[#ff0000] text-[#ff0000] hover:bg-[#ff0000] hover:text-black font-press-start text-[9px] transition-colors"
+                        >
+                          RETRY
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         )}
       </div>
-      
+
       {/* Notice Banner */}
       <div className="arcade-card p-4 border-dashed border-[#ffb847] bg-[#ffb847]/5 flex items-start gap-3">
         <AlertTriangle className="text-[#ffb847] flex-shrink-0" size={18} />
         <div>
-          <span className="font-press-start text-[9px] text-[#ffb847] block mb-1">DEVELOPMENT SANDBOX LOG</span>
+          <span className="font-press-start text-[9px] text-[#ffb847] block mb-1">STORAGE NOTICE</span>
           <p className="font-sans text-xs text-[#fdfdcb]/80 leading-relaxed">
-            Active file writes are currently configured to log simulated outputs. Core S3 buckets and credentials auth interfaces will connect automatically once backend modules are online.
+            Files are written to disk behind a swappable storage interface. AWS S3 integration will replace that driver later without changing this workflow.
           </p>
         </div>
       </div>
