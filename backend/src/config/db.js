@@ -1,21 +1,9 @@
-const { Pool } = require('pg');
-const env = require('./env');
+const { sequelize } = require('../models');
 const logger = require('../utils/logger');
-
-const pool = new Pool({
-  connectionString: env.databaseUrl,
-});
-
-// A broken idle connection should be logged, not crash the process.
-pool.on('error', (err) => {
-  logger.error(`Unexpected error on idle PostgreSQL client: ${err.message}`);
-});
 
 async function testConnection() {
   try {
-    const client = await pool.connect();
-    await client.query('SELECT 1');
-    client.release();
+    await sequelize.authenticate();
     logger.info('Database connection verified');
     return true;
   } catch (err) {
@@ -24,4 +12,4 @@ async function testConnection() {
   }
 }
 
-module.exports = { pool, testConnection };
+module.exports = { sequelize, testConnection };
