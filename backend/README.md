@@ -1,10 +1,9 @@
 # RevAudit Backend
 
-Express API server for RevAudit. No feature routes exist yet beyond a health
-check — this repo currently holds the server skeleton and the database
-layer (models, migrations, validation, relationships) it will be built on.
-See the project's system architecture plan for the full API surface and AWS
-deployment design.
+Express API server for RevAudit. The server skeleton, database layer, and
+JWT authentication are implemented; presentation upload/publish endpoints
+are not built yet. See the project's system architecture plan for the full
+API surface and AWS deployment design.
 
 ## Stack
 
@@ -40,6 +39,7 @@ npm run migrate
 | `npm test` | Run the model test suite against in-memory SQLite |
 | `npm run migrate` | Apply pending migrations to `DATABASE_URL` |
 | `npm run migrate:undo` | Roll back the most recent migration |
+| `npm run create-admin` | Create (or promote) an admin account — see [Authentication](#authentication) |
 
 ## Folder structure
 
@@ -52,18 +52,28 @@ backend/
 │   │   ├── env.js          # loads & validates environment variables
 │   │   ├── database.js     # Sequelize config per NODE_ENV (dev/test/prod)
 │   │   └── db.js           # exports the Sequelize instance + a health check
-│   ├── controllers/        # request handlers (currently: health checks only)
-│   ├── routes/             # Express routers, mounted under /api
-│   ├── models/             # Sequelize models: User, Presentation, File
-│   ├── middleware/          # errorHandler, notFound
-│   ├── services/           # business logic layer (empty — no features yet)
+│   ├── controllers/         # auth.controller, admin.controller, health.controller
+│   ├── routes/              # Express routers, mounted under /api
+│   ├── models/              # Sequelize models: User, Presentation, File
+│   ├── middleware/
+│   │   ├── requireAuth.js    # verifies the JWT, loads the user, sets req.user
+│   │   ├── requireRole.js    # role gate, used after requireAuth
+│   │   ├── rateLimit.js      # throttles /auth/login and /auth/register
+│   │   ├── errorHandler.js
+│   │   └── notFound.js
+│   ├── services/
+│   │   └── auth.service.js   # register/login business logic
 │   └── utils/
-│       ├── logger.js        # leveled, timestamped console logger
-│       └── AppError.js      # operational-error class for controllers to throw
-├── migrations/              # sequelize-cli migrations (users, presentations, files)
-├── seeders/                 # sequelize-cli seed data (empty for now)
-├── tests/                   # Jest model tests, run against in-memory SQLite
-├── .sequelizerc             # points sequelize-cli at the folders above
+│       ├── logger.js         # leveled, timestamped console logger
+│       ├── AppError.js       # operational-error class for controllers to throw
+│       ├── asyncHandler.js   # forwards async controller rejections to next()
+│       └── jwt.js            # signs/verifies access tokens
+├── migrations/               # sequelize-cli migrations (users, presentations, files)
+├── seeders/                  # sequelize-cli seed data (empty for now)
+├── scripts/
+│   └── create-admin.js        # the only way to create an admin account
+├── tests/                    # Jest suite, run against in-memory SQLite
+├── .sequelizerc              # points sequelize-cli at the folders above
 ├── package.json
 ├── .env.example
 └── README.md
@@ -151,6 +161,48 @@ JSON-text `authors` column above), so the tests genuinely exercise the same
 model code that runs against Postgres in development and production — the
 storage engine underneath is the only thing that differs.
 
+## Authentication
+
+JWT-based, stateless — no session table, no refresh tokens yet. A successful
+login/register returns a signed access token (`JWT_EXPIRES_IN`, default 1
+hour) that the client sends back as `Authorization: Bearer <token>`.
+
+**There is no way to create an admin account through the API.**
+`POST /api/auth/register` always creates a `viewer`, even if the request
+body includes `"role": "admin"` — the field is ignored server-side. This is
+deliberate: a public endpoint must never be able to self-grant elevated
+access. To create the first admin (or promote an existing user), run:
+
+```bash
+ADMIN_NAME="Dr. Sukhpal Singh" \
+ADMIN_EMAIL="admin@example.com" \
+ADMIN_PASSWORD="a-strong-password" \
+npm run create-admin
+```
+
+### How a request gets authorized
+
+1. `requireAuth` reads the `Authorization` header, verifies the JWT's
+   signature and expiry, then **re-loads the user from the database** by the
+   token's subject — a deleted account is rejected immediately rather than
+   staying valid until the token expires on its own.
+2. `requireRole('admin')` (or any other role list) runs after `requireAuth`
+   and checks `req.user.role`. `src/routes/admin.routes.js` applies both to
+   every route in the file with a single `router.use(requireAuth,
+   requireRole('admin'))` — a new admin-only route just gets added to that
+   file and inherits the gate automatically.
+3. Login and register are both rate-limited (10 requests / 15 minutes / IP)
+   against credential stuffing and account-creation spam.
+
+### Endpoints
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| `POST` | `/api/auth/register` | none | Create an account. Always `role: "viewer"` regardless of request body. |
+| `POST` | `/api/auth/login` | none | `{ email, password }` → `{ user, token }`. Same `401` message whether the email doesn't exist or the password is wrong. |
+| `GET` | `/api/auth/me` | any valid token | Returns the authenticated user's own profile. |
+| `GET` | `/api/admin/dashboard` | token + `admin` role | Stub proving the auth chain protects a real, DB-backed route (presentation counts by status). The actual presentations CRUD API isn't built yet. |
+
 ## Endpoints
 
 | Method | Path | Purpose |
@@ -168,7 +220,8 @@ its full stack trace.
 
 ## Not implemented yet
 
-The database layer exists (models, migrations, validation, relationships),
-but nothing in `controllers/`, `routes/`, or `services/` uses it yet — there
-is still no login endpoint, no upload endpoint, and no presentation-publish
-endpoint. That's the next layer to build on top of this schema.
+Auth and the database layer are done. Still missing: the presentations CRUD
+API (create/upload/publish/version-history), file upload to S3, and refresh
+tokens / logout revocation (the current access token can't be invalidated
+before it expires — there's no session table yet, unlike the fuller design
+in the system architecture plan).

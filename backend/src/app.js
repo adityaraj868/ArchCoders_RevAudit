@@ -20,11 +20,13 @@ app.use(
 );
 app.use(express.json());
 
-app.use(
-  morgan(env.nodeEnv === 'production' ? 'combined' : 'dev', {
-    stream: { write: (message) => logger.info(message.trim()) },
-  })
-);
+if (env.nodeEnv !== 'test') {
+  app.use(
+    morgan(env.nodeEnv === 'production' ? 'combined' : 'dev', {
+      stream: { write: (message) => logger.info(message.trim()) },
+    })
+  );
+}
 
 app.use('/api', routes);
 
