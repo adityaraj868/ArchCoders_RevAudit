@@ -13,13 +13,24 @@ function normalizeSequelizeError(err) {
   return null;
 }
 
+const MULTER_MESSAGES = {
+  LIMIT_FILE_SIZE: 'File exceeds the maximum allowed size',
+  LIMIT_FILE_COUNT: 'Too many files in a single upload',
+  LIMIT_UNEXPECTED_FILE: 'Unexpected file field',
+};
+
+function normalizeMulterError(err) {
+  if (err.name !== 'MulterError') return null;
+  return { message: MULTER_MESSAGES[err.code] || err.message, statusCode: 400, isOperational: true };
+}
+
 // Centralized error handler — every thrown/next(err) call in the app ends up here.
 // eslint-disable-next-line no-unused-vars
 function errorHandler(err, req, res, next) {
-  const sequelizeError = normalizeSequelizeError(err);
-  const statusCode = sequelizeError?.statusCode || err.statusCode || 500;
-  const isOperational = sequelizeError?.isOperational || err.isOperational === true;
-  const message = sequelizeError?.message || err.message;
+  const normalized = normalizeSequelizeError(err) || normalizeMulterError(err);
+  const statusCode = normalized?.statusCode || err.statusCode || 500;
+  const isOperational = normalized?.isOperational || err.isOperational === true;
+  const message = normalized?.message || err.message;
 
   if (statusCode >= 500) {
     logger.error(`${req.method} ${req.originalUrl} -> ${err.message}`, { stack: err.stack });

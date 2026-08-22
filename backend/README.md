@@ -1,9 +1,10 @@
 # RevAudit Backend
 
 Express API server for RevAudit. The server skeleton, database layer, JWT
-authentication, and presentation version management are implemented; file
-upload to S3 is not built yet. See the project's system architecture plan
-for the full API surface and AWS deployment design.
+authentication, presentation version management, and file upload are
+implemented, storing to local disk behind a swappable storage abstraction —
+AWS S3 is not wired up yet. See the project's system architecture plan for
+the full API surface and AWS deployment design.
 
 ## Stack
 
@@ -52,19 +53,24 @@ backend/
 │   │   ├── env.js          # loads & validates environment variables
 │   │   ├── database.js     # Sequelize config per NODE_ENV (dev/test/prod)
 │   │   └── db.js           # exports the Sequelize instance + a health check
-│   ├── controllers/         # auth, admin, presentation, health
+│   ├── controllers/         # auth, admin, presentation, file, health
 │   ├── routes/              # Express routers, mounted under /api
 │   ├── models/              # Sequelize models: User, Presentation, File
 │   ├── middleware/
 │   │   ├── requireAuth.js         # verifies the JWT, loads the user, sets req.user
 │   │   ├── requireRole.js         # role gate, used after requireAuth
 │   │   ├── attachUserIfPresent.js # optional-auth: never blocks, just identifies admins
+│   │   ├── upload.js              # multer config: memory storage, size/type limits
 │   │   ├── rateLimit.js           # throttles /auth/login and /auth/register
 │   │   ├── errorHandler.js
 │   │   └── notFound.js
 │   ├── services/
 │   │   ├── auth.service.js         # register/login business logic
-│   │   └── presentation.service.js # version create/list/get/update rules
+│   │   ├── presentation.service.js # version create/list/get/update rules
+│   │   ├── file.service.js         # links an upload to a presentation
+│   │   └── storage/                # storage abstraction — see below
+│   │       ├── index.js             # picks a driver by STORAGE_DRIVER
+│   │       └── localStorageService.js
 │   └── utils/
 │       ├── logger.js         # leveled, timestamped console logger
 │       ├── AppError.js       # operational-error class for controllers to throw
@@ -256,6 +262,68 @@ was already published. Publishing is therefore a one-way door: a version
 goes draft → published exactly once, and after that `PUT` on it always
 fails with `409`, admin or not.
 
+## File upload
+
+### Storage abstraction
+
+`src/services/storage/index.js` picks a driver by the `STORAGE_DRIVER` env
+var; every driver implements the same two functions:
+
+```
+save({ buffer, originalName, presentationId }) -> { filename, storagePath }
+getUrl(storagePath) -> string
+```
+
+Only one driver exists today — `local`, which writes to disk under
+`UPLOAD_DIR` (default `backend/uploads/`, git-ignored), namespaced by
+presentation id so files from different versions never collide. Nothing
+above the storage layer (`file.service.js`, the controller, the route) knows
+or cares which driver is active — swapping in an `s3` driver later, or
+adding a second one for local dev, means writing one new file that exports
+the same `{ save, getUrl }` shape and adding it to the `DRIVERS` map. AWS S3
+is deliberately not implemented yet, per this feature's scope.
+
+Multer (`src/middleware/upload.js`) uses `memoryStorage()` — it only parses
+multipart form data into buffers in memory; it never touches disk itself.
+That's what makes the storage driver swap possible: multer's job stops at
+"here are the bytes and metadata," and everything after that is the storage
+service's decision.
+
+### Endpoint
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| `POST` | `/api/files/upload` | token + `admin` role | Multipart upload. Field `presentationId` (required) plus one or more files under the field name `files`. |
+
+Request shape (`multipart/form-data`):
+
+```
+presentationId: <uuid>
+files: <file>       (repeat the "files" field for multiple files —
+                      a folder upload is just the browser expanding a
+                      directory picker into several files client-side)
+```
+
+### Validation
+
+- **Type** — checked against the same `File.ALLOWED_MIME_TYPES` allow-list
+  the database model already enforces (PDF, PPT/PPTX, ZIP, PNG/JPEG/SVG) —
+  defined once, used by both multer's `fileFilter` and the model, so they
+  can't drift apart.
+- **Size** — `MAX_UPLOAD_SIZE_MB` per file (default 25) and
+  `MAX_FILES_PER_UPLOAD` per request (default 20), enforced by multer.
+- **Presentation state** — the target presentation must exist (`404` if
+  not) and must not already be `published` (`409` if it is) — a published
+  version's file set is frozen along with everything else about it, for the
+  same reason `PUT` stops working on it.
+
+### Metadata storage
+
+Each uploaded file becomes one `File` row (`filename`, `originalName`,
+`storagePath`, `size`, `type`, `presentationId`, `uploadedBy`) — the schema
+already built in the database layer. A multi-file request creates one row
+per file, all linked to the same `presentationId`.
+
 ## Endpoints
 
 | Method | Path | Purpose |
@@ -273,10 +341,10 @@ its full stack trace.
 
 ## Not implemented yet
 
-Auth, the database layer, and presentation version management are done.
-Still missing: actual file upload (the `File` model and its S3 storage path
-exist, but nothing in `presentation.routes.js` accepts a file yet — versions
-are metadata-only for now), and refresh tokens / logout revocation (the
-current access token can't be invalidated before it expires — there's no
-session table yet, unlike the fuller design in the system architecture
-plan).
+Auth, the database layer, presentation version management, and file upload
+(to local disk) are done. Still missing: an AWS S3 storage driver (the
+abstraction is ready for one — see [File upload](#file-upload)), a route to
+actually serve/download an uploaded file, and refresh tokens / logout
+revocation (the current access token can't be invalidated before it expires
+— there's no session table yet, unlike the fuller design in the system
+architecture plan).
