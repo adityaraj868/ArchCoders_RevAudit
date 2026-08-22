@@ -6,26 +6,14 @@ const asyncHandler = require('../utils/asyncHandler');
 // presentations feature itself (create/upload/publish) is a separate piece
 // of work built on top of this same middleware.
 const getDashboard = asyncHandler(async (req, res) => {
-  const [total, statusCounts] = await Promise.all([
-    Presentation.count(),
-    Presentation.findAll({
-      attributes: [
-        'status',
-        [Presentation.sequelize.fn('COUNT', Presentation.sequelize.col('status')), 'count'],
-      ],
-      group: ['status'],
-      raw: true,
-    }),
-  ]);
+  const [total, published] = await Promise.all([Presentation.count(), Presentation.count({ where: { published: true } })]);
 
   res.json({
     admin: { id: req.user.id, name: req.user.name },
     presentations: {
       total,
-      byStatus: statusCounts.reduce((acc, row) => {
-        acc[row.status] = Number(row.count);
-        return acc;
-      }, {}),
+      published,
+      draft: total - published,
     },
   });
 });

@@ -1,9 +1,9 @@
 # RevAudit Backend
 
-Express API server for RevAudit. The server skeleton, database layer, and
-JWT authentication are implemented; presentation upload/publish endpoints
-are not built yet. See the project's system architecture plan for the full
-API surface and AWS deployment design.
+Express API server for RevAudit. The server skeleton, database layer, JWT
+authentication, and presentation version management are implemented; file
+upload to S3 is not built yet. See the project's system architecture plan
+for the full API surface and AWS deployment design.
 
 ## Stack
 
@@ -52,17 +52,19 @@ backend/
 │   │   ├── env.js          # loads & validates environment variables
 │   │   ├── database.js     # Sequelize config per NODE_ENV (dev/test/prod)
 │   │   └── db.js           # exports the Sequelize instance + a health check
-│   ├── controllers/         # auth.controller, admin.controller, health.controller
+│   ├── controllers/         # auth, admin, presentation, health
 │   ├── routes/              # Express routers, mounted under /api
 │   ├── models/              # Sequelize models: User, Presentation, File
 │   ├── middleware/
-│   │   ├── requireAuth.js    # verifies the JWT, loads the user, sets req.user
-│   │   ├── requireRole.js    # role gate, used after requireAuth
-│   │   ├── rateLimit.js      # throttles /auth/login and /auth/register
+│   │   ├── requireAuth.js         # verifies the JWT, loads the user, sets req.user
+│   │   ├── requireRole.js         # role gate, used after requireAuth
+│   │   ├── attachUserIfPresent.js # optional-auth: never blocks, just identifies admins
+│   │   ├── rateLimit.js           # throttles /auth/login and /auth/register
 │   │   ├── errorHandler.js
 │   │   └── notFound.js
 │   ├── services/
-│   │   └── auth.service.js   # register/login business logic
+│   │   ├── auth.service.js         # register/login business logic
+│   │   └── presentation.service.js # version create/list/get/update rules
 │   └── utils/
 │       ├── logger.js         # leveled, timestamped console logger
 │       ├── AppError.js       # operational-error class for controllers to throw
@@ -105,19 +107,29 @@ future login endpoint) — every other query gets it stripped automatically.
 
 | Field | Type | Rules |
 |---|---|---|
-| `title` | string | required, ≤200 chars |
-| `version` | string | required, must look like `1`, `1.0`, or `2.3.1` |
+| `title` | string | required, ≤200 chars — **immutable after creation** |
+| `version` | string | required, must look like `1`, `1.0`, or `2.3.1` — **immutable after creation** |
 | `authors` | string[] | required, at least one non-empty name — stored as a JSON string column (see below) |
 | `date` | date | required |
-| `description` | text | optional, ≤2000 chars |
-| `status` | enum | `draft` \| `uploading` \| `processing` \| `uploaded` \| `published` \| `failed`, defaults to `draft` |
+| `changeSummary` | text | optional, ≤2000 chars |
+| `published` | boolean | defaults to `false` — **once `true`, the entire row is frozen** |
 | `createdBy` | UUID | required, references `users.id` |
 
-`(title, version)` has a unique index — the same deck can't be published
-twice under the same version label. A `beforeDestroy` hook blocks deleting
-any presentation whose `status` is `published`, matching the "publishing
-never overwrites or deletes an earlier version" rule from the architecture
-plan — draft/failed rows can still be cleaned up.
+`(title, version)` has a unique index — the same version label can't be
+created twice under the same title. Two hooks enforce version-history
+integrity directly in the model, so no code path (API or otherwise) can
+violate it:
+
+- `beforeUpdate` rejects any attempt to change `title` or `version` — ever,
+  regardless of publish state — and rejects *any* change at all once
+  `published` was already `true`. A published version is completely frozen;
+  the only legal transition is unpublished → published, once.
+- `beforeDestroy` blocks deleting a published row.
+
+This is what makes "uploading v2" structurally incapable of touching v1:
+there is no field through which a client could repoint an existing row at
+different content, and publishing a row takes it out of reach of every
+future write.
 
 `authors` is a JSON-encoded `TEXT` column rather than a native Postgres
 `ARRAY`, specifically so the exact same model works against the SQLite
@@ -201,7 +213,48 @@ npm run create-admin
 | `POST` | `/api/auth/register` | none | Create an account. Always `role: "viewer"` regardless of request body. |
 | `POST` | `/api/auth/login` | none | `{ email, password }` → `{ user, token }`. Same `401` message whether the email doesn't exist or the password is wrong. |
 | `GET` | `/api/auth/me` | any valid token | Returns the authenticated user's own profile. |
-| `GET` | `/api/admin/dashboard` | token + `admin` role | Stub proving the auth chain protects a real, DB-backed route (presentation counts by status). The actual presentations CRUD API isn't built yet. |
+| `GET` | `/api/admin/dashboard` | token + `admin` role | Presentation counts (total/published/draft) — proves the auth chain protects a real, DB-backed route. |
+
+## Presentation management
+
+Every presentation *version* is its own row — there is no separate
+"presentation" parent record. Creating v2 of a title never touches v1's row;
+they coexist under the same `title` with different `version` values. See
+[Database layer → Presentation](#presentation) for exactly how the model
+enforces this at the data layer.
+
+### Visibility
+
+- `GET /api/presentations` and `GET /api/presentations/:id` are **public** —
+  no token required.
+- An anonymous (or non-admin) caller only ever sees `published: true`
+  versions. An authenticated admin sees everything, drafts included.
+- Requesting an unpublished version's `:id` as a non-admin returns `404`,
+  the same as if it didn't exist at all — a draft's existence isn't
+  confirmed to callers who can't see it.
+
+### Endpoints
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| `POST` | `/api/presentations` | token + `admin` role | Create a new version. `title`, `version`, `date`, `authors` required; `changeSummary` and `published` optional. `createdBy` is always the caller, never taken from the body. |
+| `GET` | `/api/presentations` | public (optional) | List versions — published-only unless the caller is an admin. |
+| `GET` | `/api/presentations/:id` | public (optional) | Fetch one version. |
+| `PUT` | `/api/presentations/:id` | token + `admin` role | Update `authors`, `date`, `changeSummary`, or `published`. Any `title`/`version` in the body is silently ignored — see below. Fails with `409` if the version is already published. |
+
+There is deliberately **no `DELETE` route** — nothing about this feature
+ever removes a version.
+
+### Why PUT can't be used to rewrite history
+
+`title` and `version` are never read from the request body by the
+controller at all, so there's no way to send them through this API even by
+accident. The model's `beforeUpdate` hook is a second, independent
+safeguard against the same thing — it throws if either field is changed by
+any means, and separately throws if *any* field is changed on a row that
+was already published. Publishing is therefore a one-way door: a version
+goes draft → published exactly once, and after that `PUT` on it always
+fails with `409`, admin or not.
 
 ## Endpoints
 
@@ -220,8 +273,10 @@ its full stack trace.
 
 ## Not implemented yet
 
-Auth and the database layer are done. Still missing: the presentations CRUD
-API (create/upload/publish/version-history), file upload to S3, and refresh
-tokens / logout revocation (the current access token can't be invalidated
-before it expires — there's no session table yet, unlike the fuller design
-in the system architecture plan).
+Auth, the database layer, and presentation version management are done.
+Still missing: actual file upload (the `File` model and its S3 storage path
+exist, but nothing in `presentation.routes.js` accepts a file yet — versions
+are metadata-only for now), and refresh tokens / logout revocation (the
+current access token can't be invalidated before it expires — there's no
+session table yet, unlike the fuller design in the system architecture
+plan).

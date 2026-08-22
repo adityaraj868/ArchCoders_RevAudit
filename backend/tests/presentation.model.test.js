@@ -17,17 +17,17 @@ beforeAll(async () => {
 afterAll(() => closeDb());
 
 describe('Presentation model', () => {
-  test('creates a valid presentation with a default status of draft', async () => {
+  test('creates a valid presentation, unpublished by default', async () => {
     const presentation = await Presentation.create({
       title: 'Planning Presentation',
       version: '1.0',
       authors: ['Dheeraj Kumar', 'Vaibhav Goyal'],
       date: '2026-08-22',
-      description: 'Initial scope approval and statistical model designs',
+      changeSummary: 'Initial scope approval and statistical model designs',
       createdBy: creator.id,
     });
 
-    expect(presentation.status).toBe('draft');
+    expect(presentation.published).toBe(false);
     expect(presentation.authors).toEqual(['Dheeraj Kumar', 'Vaibhav Goyal']);
   });
 
@@ -69,19 +69,6 @@ describe('Presentation model', () => {
     ).rejects.toThrow();
   });
 
-  test('rejects an unrecognized status', async () => {
-    await expect(
-      Presentation.create({
-        title: 'Bad Status',
-        version: '1.0',
-        authors: ['Someone'],
-        date: '2026-08-22',
-        createdBy: creator.id,
-        status: 'archived',
-      })
-    ).rejects.toThrow();
-  });
-
   test('rejects a duplicate title + version pair', async () => {
     await Presentation.create({
       title: 'Final Presentation',
@@ -116,28 +103,98 @@ describe('Presentation model', () => {
     expect(found.creator.name).toBe('Dheeraj Kumar');
   });
 
-  test('blocks deleting a published presentation', async () => {
-    const presentation = await Presentation.create({
-      title: 'Immutable Once Published',
-      version: '1.0',
-      authors: ['Someone'],
-      date: '2026-08-22',
-      createdBy: creator.id,
-      status: 'published',
+  describe('version-history immutability', () => {
+    test('allows editing mutable fields while unpublished', async () => {
+      const presentation = await Presentation.create({
+        title: 'Draft In Progress',
+        version: '1.0',
+        authors: ['Someone'],
+        date: '2026-08-22',
+        createdBy: creator.id,
+      });
+
+      presentation.changeSummary = 'Updated before publishing';
+      await expect(presentation.save()).resolves.not.toThrow();
+      expect(presentation.changeSummary).toBe('Updated before publishing');
     });
 
-    await expect(presentation.destroy()).rejects.toThrow(/published/i);
-  });
+    test('rejects changing the title after creation', async () => {
+      const presentation = await Presentation.create({
+        title: 'Original Title',
+        version: '1.0',
+        authors: ['Someone'],
+        date: '2026-08-22',
+        createdBy: creator.id,
+      });
 
-  test('allows deleting a draft presentation', async () => {
-    const presentation = await Presentation.create({
-      title: 'Deletable Draft',
-      version: '1.0',
-      authors: ['Someone'],
-      date: '2026-08-22',
-      createdBy: creator.id,
+      presentation.title = 'Renamed Title';
+      await expect(presentation.save()).rejects.toThrow(/title and version/i);
     });
 
-    await expect(presentation.destroy()).resolves.not.toThrow();
+    test('rejects changing the version after creation', async () => {
+      const presentation = await Presentation.create({
+        title: 'Version Lock Check',
+        version: '1.0',
+        authors: ['Someone'],
+        date: '2026-08-22',
+        createdBy: creator.id,
+      });
+
+      presentation.version = '2.0';
+      await expect(presentation.save()).rejects.toThrow(/title and version/i);
+    });
+
+    test('rejects any further edit once published', async () => {
+      const presentation = await Presentation.create({
+        title: 'Publish Once',
+        version: '1.0',
+        authors: ['Someone'],
+        date: '2026-08-22',
+        createdBy: creator.id,
+        published: true,
+      });
+
+      presentation.changeSummary = 'Trying to sneak in a change';
+      await expect(presentation.save()).rejects.toThrow(/immutable/i);
+    });
+
+    test('allows publishing a draft exactly once', async () => {
+      const presentation = await Presentation.create({
+        title: 'About To Publish',
+        version: '1.0',
+        authors: ['Someone'],
+        date: '2026-08-22',
+        createdBy: creator.id,
+      });
+
+      presentation.published = true;
+      await expect(presentation.save()).resolves.not.toThrow();
+      expect(presentation.published).toBe(true);
+    });
+
+    test('blocks deleting a published presentation', async () => {
+      const presentation = await Presentation.create({
+        title: 'Immutable Once Published',
+        version: '1.0',
+        authors: ['Someone'],
+        date: '2026-08-22',
+        createdBy: creator.id,
+        published: true,
+      });
+
+      await expect(presentation.destroy()).rejects.toThrow(/published/i);
+    });
+
+    test('allows deleting a draft presentation', async () => {
+      const presentation = await Presentation.create({
+        title: 'Deletable Draft',
+        version: '1.0',
+        authors: ['Someone'],
+        date: '2026-08-22',
+        createdBy: creator.id,
+      });
+
+      await expect(presentation.destroy()).resolves.not.toThrow();
+    });
   });
 });

@@ -1,4 +1,4 @@
-const STATUSES = ['draft', 'uploading', 'processing', 'uploaded', 'published', 'failed'];
+const AppError = require('../utils/AppError');
 
 module.exports = (sequelize, DataTypes) => {
   const Presentation = sequelize.define(
@@ -65,20 +65,17 @@ module.exports = (sequelize, DataTypes) => {
           isDate: { msg: 'Date must be a valid date', args: true },
         },
       },
-      description: {
+      changeSummary: {
         type: DataTypes.TEXT,
         allowNull: true,
         validate: {
-          len: { args: [0, 2000], msg: 'Description must be at most 2000 characters' },
+          len: { args: [0, 2000], msg: 'Change summary must be at most 2000 characters' },
         },
       },
-      status: {
-        type: DataTypes.ENUM(...STATUSES),
+      published: {
+        type: DataTypes.BOOLEAN,
         allowNull: false,
-        defaultValue: 'draft',
-        validate: {
-          isIn: { args: [STATUSES], msg: `Status must be one of: ${STATUSES.join(', ')}` },
-        },
+        defaultValue: false,
       },
       createdBy: {
         type: DataTypes.UUID,
@@ -90,11 +87,22 @@ module.exports = (sequelize, DataTypes) => {
       underscored: true,
       indexes: [{ unique: true, fields: ['title', 'version'] }],
       hooks: {
-        // Mirrors the "publishing never overwrites or deletes an earlier
-        // version" rule from the system architecture plan.
+        // The core version-history guarantee: title/version identify a
+        // version forever and can never be repointed at different content,
+        // and once a version is published it is frozen entirely — no field
+        // on it can change again. Uploading v2 creates a new row; it can
+        // never become a way to edit v1.
+        beforeUpdate: (presentation) => {
+          if (presentation.changed('title') || presentation.changed('version')) {
+            throw new AppError('Title and version cannot be changed after a version is created', 400);
+          }
+          if (presentation.previous('published') === true) {
+            throw new AppError('A published presentation version is immutable and cannot be modified', 409);
+          }
+        },
         beforeDestroy: (presentation) => {
-          if (presentation.status === 'published') {
-            throw new Error('A published presentation version cannot be deleted');
+          if (presentation.published) {
+            throw new AppError('A published presentation version cannot be deleted', 409);
           }
         },
       },
