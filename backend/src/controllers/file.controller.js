@@ -8,13 +8,22 @@ const uploadFiles = asyncHandler(async (req, res) => {
     throw new AppError('presentationId is required', 400);
   }
 
-  const files = await fileService.uploadFiles({
+  const uploaded = await fileService.uploadFiles({
     presentationId,
     files: req.files,
     uploadedBy: req.user.id,
   });
 
-  res.status(201).json({ files });
+  res.status(201).json({
+    files: uploaded.map(({ record, url }) => ({ ...record.toJSON(), url })),
+  });
 });
 
-module.exports = { uploadFiles };
+// Signed URLs expire, so this is a live lookup, not a cached value —
+// callers ask for a fresh one whenever they actually need to open the file.
+const getFileUrl = asyncHandler(async (req, res) => {
+  const url = await fileService.getFileUrl(req.params.id, req.user);
+  res.json({ url });
+});
+
+module.exports = { uploadFiles, getFileUrl };

@@ -77,6 +77,7 @@ describe('POST /api/files/upload', () => {
     expect(res.body.files[0].originalName).toBe('deck.pdf');
     expect(res.body.files[0].type).toBe('application/pdf');
     expect(res.body.files[0].uploadedBy).toBeDefined();
+    expect(res.body.files[0].url).toBeDefined();
   });
 
   test('uploads multiple files in one request, approximating a folder upload', async () => {
@@ -134,5 +135,61 @@ describe('POST /api/files/upload', () => {
       request(app).post('/api/files/upload').set('Authorization', `Bearer ${adminToken}`).field('presentationId', publishedId)
     );
     expect(res.status).toBe(409);
+  });
+});
+
+describe('GET /api/files/:id/url', () => {
+  let draftFileId;
+  let publishedFileId;
+
+  beforeAll(async () => {
+    const draftUpload = await attachPdf(
+      request(app).post('/api/files/upload').set('Authorization', `Bearer ${adminToken}`).field('presentationId', draftId),
+      'draft-file.pdf'
+    );
+    draftFileId = draftUpload.body.files[0].id;
+
+    // A fresh presentation, uploaded to while still a draft, published only
+    // after the file is attached — mirrors the real publish workflow.
+    const forUrlTest = await request(app)
+      .post('/api/presentations')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ title: 'URL Test Deck', version: '1.0', date: '2026-08-22', authors: ['Someone'] });
+    const forUrlTestId = forUrlTest.body.presentation.id;
+
+    const publishedUpload = await attachPdf(
+      request(app).post('/api/files/upload').set('Authorization', `Bearer ${adminToken}`).field('presentationId', forUrlTestId),
+      'published-file.pdf'
+    );
+    publishedFileId = publishedUpload.body.files[0].id;
+
+    await request(app)
+      .put(`/api/presentations/${forUrlTestId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ published: true });
+  });
+
+  test('anyone can resolve a URL for a file on a published presentation', async () => {
+    const res = await request(app).get(`/api/files/${publishedFileId}/url`);
+    expect(res.status).toBe(200);
+    expect(res.body.url).toBeDefined();
+  });
+
+  test('an anonymous request for a file on a draft presentation gets 404', async () => {
+    const res = await request(app).get(`/api/files/${draftFileId}/url`);
+    expect(res.status).toBe(404);
+  });
+
+  test('an admin can resolve a URL for a file on a draft presentation', async () => {
+    const res = await request(app).get(`/api/files/${draftFileId}/url`).set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.url).toBeDefined();
+  });
+
+  test('a nonexistent file id gets 404', async () => {
+    const res = await request(app)
+      .get('/api/files/00000000-0000-0000-0000-000000000000/url')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(404);
   });
 });

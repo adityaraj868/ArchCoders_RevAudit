@@ -23,12 +23,23 @@ const env = {
   jwtSecret: process.env.JWT_SECRET || 'dev-only-insecure-secret-change-me',
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '1h',
 
-  // "local" today; a future "s3" driver plugs into the same interface in
-  // src/services/storage without any caller needing to change.
+  // "local" or "s3" — src/services/storage picks the matching driver.
+  // Callers never know which one is active.
   storageDriver: process.env.STORAGE_DRIVER || 'local',
   uploadDir: process.env.UPLOAD_DIR || defaultUploadDir,
   maxUploadSizeBytes: (parseInt(process.env.MAX_UPLOAD_SIZE_MB, 10) || 25) * 1024 * 1024,
   maxFilesPerUpload: parseInt(process.env.MAX_FILES_PER_UPLOAD, 10) || 20,
+
+  // Only read/required when storageDriver is "s3" — see s3StorageService.js.
+  // Never logged, never echoed back in any response.
+  awsAccessKey: process.env.AWS_ACCESS_KEY,
+  awsSecretKey: process.env.AWS_SECRET_KEY,
+  awsRegion: process.env.AWS_REGION || 'us-east-1',
+  awsBucketName: process.env.AWS_BUCKET_NAME,
+  // Optional. Leave unset to talk to real AWS. Only set this to point the
+  // SDK at an S3-compatible endpoint instead (MinIO, other providers, local
+  // testing) — production against real AWS never needs it.
+  awsS3Endpoint: process.env.AWS_S3_ENDPOINT || undefined,
 };
 
 if (env.nodeEnv === 'production') {

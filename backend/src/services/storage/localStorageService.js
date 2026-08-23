@@ -14,6 +14,9 @@ function safeExtension(originalName = '') {
 // Namespaced by presentationId, which is always a UUID that has already
 // been verified to exist in the database by the time this is called — never
 // raw user input used as a path segment.
+// mimeType is part of the shared save() contract (s3StorageService uses it
+// as the object's Content-Type) but is irrelevant to writing a plain file
+// to disk, so it's simply not destructured here.
 async function save({ buffer, originalName, presentationId }) {
   const dir = path.join(env.uploadDir, presentationId);
   await fs.mkdir(dir, { recursive: true });
@@ -25,6 +28,8 @@ async function save({ buffer, originalName, presentationId }) {
   return { filename, storagePath };
 }
 
+// Synchronous today, but callers always `await` this (see storage/index.js)
+// so it stays interchangeable with s3StorageService's async signed URLs.
 function getUrl(storagePath) {
   return `/uploads/${storagePath}`;
 }

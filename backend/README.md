@@ -1,10 +1,10 @@
 # RevAudit Backend
 
 Express API server for RevAudit. The server skeleton, database layer, JWT
-authentication, presentation version management, and file upload are
-implemented, storing to local disk behind a swappable storage abstraction —
-AWS S3 is not wired up yet. See the project's system architecture plan for
-the full API surface and AWS deployment design.
+authentication, presentation version management, and file upload (to local
+disk or AWS S3, behind a swappable storage abstraction) are implemented. See
+the project's system architecture plan for the full API surface and AWS
+deployment design.
 
 ## Stack
 
@@ -70,7 +70,8 @@ backend/
 │   │   ├── file.service.js         # links an upload to a presentation
 │   │   └── storage/                # storage abstraction — see below
 │   │       ├── index.js             # picks a driver by STORAGE_DRIVER
-│   │       └── localStorageService.js
+│   │       ├── localStorageService.js
+│   │       └── s3StorageService.js  # AWS S3, private bucket + signed URLs
 │   └── utils/
 │       ├── logger.js         # leveled, timestamped console logger
 │       ├── AppError.js       # operational-error class for controllers to throw
@@ -267,21 +268,19 @@ fails with `409`, admin or not.
 ### Storage abstraction
 
 `src/services/storage/index.js` picks a driver by the `STORAGE_DRIVER` env
-var; every driver implements the same two functions:
+var (`local` or `s3`); both implement the same two functions:
 
 ```
-save({ buffer, originalName, presentationId }) -> { filename, storagePath }
-getUrl(storagePath) -> string
+save({ buffer, originalName, presentationId, mimeType }) -> { filename, storagePath }
+getUrl(storagePath, { expiresInSeconds? }) -> string | Promise<string>
 ```
 
-Only one driver exists today — `local`, which writes to disk under
-`UPLOAD_DIR` (default `backend/uploads/`, git-ignored), namespaced by
-presentation id so files from different versions never collide. Nothing
-above the storage layer (`file.service.js`, the controller, the route) knows
-or cares which driver is active — swapping in an `s3` driver later, or
-adding a second one for local dev, means writing one new file that exports
-the same `{ save, getUrl }` shape and adding it to the `DRIVERS` map. AWS S3
-is deliberately not implemented yet, per this feature's scope.
+Nothing above the storage layer (`file.service.js`, the controller, the
+route) knows or cares which driver is active. The driver modules are
+required *lazily*, by path, based on `STORAGE_DRIVER` — `s3StorageService`
+validates its own AWS config the moment it's loaded, and that must only
+happen when `s3` is actually selected, or the zero-config `local` default
+would fail to start without AWS credentials it doesn't need.
 
 Multer (`src/middleware/upload.js`) uses `memoryStorage()` — it only parses
 multipart form data into buffers in memory; it never touches disk itself.
@@ -289,11 +288,48 @@ That's what makes the storage driver swap possible: multer's job stops at
 "here are the bytes and metadata," and everything after that is the storage
 service's decision.
 
-### Endpoint
+**`local`** writes to disk under `UPLOAD_DIR` (default `backend/uploads/`,
+git-ignored), namespaced by presentation id. `getUrl()` returns a plain
+`/uploads/...` path.
+
+**`s3`** uploads to the bucket named by `AWS_BUCKET_NAME`, same
+presentation-id namespacing, via `@aws-sdk/client-s3`. No object ACL is ever
+set — **the bucket is expected to stay private**; `getUrl()` returns a
+time-limited *signed* URL (`@aws-sdk/s3-request-presigner`, 1 hour default)
+rather than a bare bucket URL, so a private bucket is still usable by the
+frontend without making anything world-readable.
+
+#### Credentials — IAM-safe by construction
+
+- Read once from `process.env` via `config/env.js` (`AWS_ACCESS_KEY`,
+  `AWS_SECRET_KEY`, `AWS_REGION`, `AWS_BUCKET_NAME`) — never hardcoded,
+  never logged, never echoed back in any API response. Every response and
+  log line was checked by hand during integration testing; none contained
+  the secret key.
+- Use an IAM user scoped to exactly this bucket, nothing more:
+
+  ```json
+  {
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Allow",
+      "Action": ["s3:PutObject", "s3:GetObject"],
+      "Resource": "arn:aws:s3:::YOUR_BUCKET_NAME/*"
+    }]
+  }
+  ```
+
+  Not a root key, not `s3:*`, not `Resource: "*"`.
+- `AWS_S3_ENDPOINT` (optional) points the SDK at an S3-compatible endpoint
+  instead of real AWS — used below for MinIO, and equally applicable to
+  other S3-compatible providers. Leave it unset for real AWS.
+
+### Endpoints
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| `POST` | `/api/files/upload` | token + `admin` role | Multipart upload. Field `presentationId` (required) plus one or more files under the field name `files`. |
+| `POST` | `/api/files/upload` | token + `admin` role | Multipart upload. Field `presentationId` (required) plus one or more files under the field name `files`. Response includes a fresh `url` per file. |
+| `GET` | `/api/files/:id/url` | public (optional) | Mint a fresh signed URL for one file. Same visibility rule as presentations: resolvable by anyone if the file's presentation is published, admin-only otherwise. Not cached — S3 signed URLs expire, so this is a live lookup every time. |
 
 Request shape (`multipart/form-data`):
 
@@ -324,6 +360,42 @@ Each uploaded file becomes one `File` row (`filename`, `originalName`,
 already built in the database layer. A multi-file request creates one row
 per file, all linked to the same `presentationId`.
 
+### How the S3 driver is tested
+
+Two layers, deliberately separate:
+
+- **`tests/s3Storage.test.js`** (part of `npm test`) mocks the S3 client
+  with `aws-sdk-client-mock` — no network, no real AWS, no dependency on
+  anything being installed or running. This is what CI and a fresh clone
+  run. It asserts the right bucket/key/`ContentType` get sent, that no ACL
+  is ever set, and that `getUrl()` produces a real signed URL (URL signing
+  is computed locally by the SDK, not a network call, so this runs against
+  the mocked client with fake credentials and still produces a genuine
+  signature).
+- **A one-off live verification**, run once by hand against
+  [MinIO](https://min.io) (a real S3-protocol server) with the actual `aws`
+  CLI, independent of the application:
+
+  ```bash
+  minio server /tmp/minio-data --address :9100 --console-address :9101 &
+  export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...
+  aws --endpoint-url http://localhost:9100 s3 mb s3://revaudit-test-bucket
+
+  # STORAGE_DRIVER=s3, AWS_S3_ENDPOINT=http://localhost:9100, same bucket —
+  # then through the real API: login → create presentation → upload a file.
+
+  aws --endpoint-url http://localhost:9100 s3 ls s3://revaudit-test-bucket --recursive
+  aws --endpoint-url http://localhost:9100 s3api head-object --bucket revaudit-test-bucket --key <key>
+  curl <the signed URL the API returned>   # bytes matched the original file
+  curl <the same object, no signature>     # 403 AccessDenied — confirms the bucket is actually private
+  ```
+
+  This confirmed, independently of the app's own claims: the object lands
+  in the bucket with the right size and content type, the signed URL
+  returns the exact original bytes, an unsigned request to the same object
+  is rejected, and the secret key never appeared in any log line or
+  response body.
+
 ## Endpoints
 
 | Method | Path | Purpose |
@@ -342,9 +414,9 @@ its full stack trace.
 ## Not implemented yet
 
 Auth, the database layer, presentation version management, and file upload
-(to local disk) are done. Still missing: an AWS S3 storage driver (the
-abstraction is ready for one — see [File upload](#file-upload)), a route to
-actually serve/download an uploaded file, and refresh tokens / logout
+(local disk or S3) are done. Still missing: refresh tokens / logout
 revocation (the current access token can't be invalidated before it expires
 — there's no session table yet, unlike the fuller design in the system
-architecture plan).
+architecture plan), and a CloudFront-fronted public URL for S3 objects (the
+signed URLs work today but bypass the CDN layer the AWS architecture plan
+calls for).

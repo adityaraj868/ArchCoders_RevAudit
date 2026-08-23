@@ -2,6 +2,10 @@ const { File, Presentation } = require('../models');
 const AppError = require('../utils/AppError');
 const storageService = require('./storage');
 
+function isAdmin(user) {
+  return Boolean(user && user.role === 'admin');
+}
+
 async function uploadFiles({ presentationId, files, uploadedBy }) {
   const presentation = await Presentation.findByPk(presentationId);
   if (!presentation) {
@@ -22,22 +26,37 @@ async function uploadFiles({ presentationId, files, uploadedBy }) {
       buffer: file.buffer,
       originalName: file.originalname,
       presentationId,
+      mimeType: file.mimetype,
     });
 
-    created.push(
-      await File.create({
-        filename,
-        originalName: file.originalname,
-        storagePath,
-        size: file.size,
-        type: file.mimetype,
-        presentationId,
-        uploadedBy,
-      })
-    );
+    const record = await File.create({
+      filename,
+      originalName: file.originalname,
+      storagePath,
+      size: file.size,
+      type: file.mimetype,
+      presentationId,
+      uploadedBy,
+    });
+
+    created.push({ record, url: await storageService.getUrl(storagePath) });
   }
 
   return created;
 }
 
-module.exports = { uploadFiles };
+// Mints a fresh URL on demand rather than persisting one — S3 signed URLs
+// expire, so a URL generated at upload time would eventually stop working.
+// Same visibility rule as presentations: a file on an unpublished draft is
+// only resolvable by an admin.
+async function getFileUrl(fileId, requester) {
+  const file = await File.findByPk(fileId, { include: { association: 'presentation' } });
+
+  if (!file || (!file.presentation.published && !isAdmin(requester))) {
+    throw new AppError('File not found', 404);
+  }
+
+  return storageService.getUrl(file.storagePath);
+}
+
+module.exports = { uploadFiles, getFileUrl };
