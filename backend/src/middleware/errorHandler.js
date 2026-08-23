@@ -10,6 +10,13 @@ function normalizeSequelizeError(err) {
     const statusCode = err.name === 'SequelizeUniqueConstraintError' ? 409 : 400;
     return { message, statusCode, isOperational: true };
   }
+  if (err.name === 'SequelizeForeignKeyConstraintError') {
+    return {
+      message: 'This record cannot be removed because other records still reference it',
+      statusCode: 409,
+      isOperational: true,
+    };
+  }
   return null;
 }
 

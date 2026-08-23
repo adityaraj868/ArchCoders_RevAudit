@@ -5,8 +5,8 @@ const {
   getPresentation,
   updatePresentation,
 } = require('../controllers/presentation.controller');
-const requireAuth = require('../middleware/requireAuth');
-const requireRole = require('../middleware/requireRole');
+const authenticateUser = require('../middleware/authenticateUser');
+const authorizeRole = require('../middleware/authorizeRole');
 const attachUserIfPresent = require('../middleware/attachUserIfPresent');
 
 const router = Router();
@@ -16,8 +16,8 @@ const router = Router();
 router.get('/', attachUserIfPresent, listPresentations);
 router.get('/:id', attachUserIfPresent, getPresentation);
 
-// Writes are admin-only.
-router.post('/', requireAuth, requireRole('admin'), createPresentation);
-router.put('/:id', requireAuth, requireRole('admin'), updatePresentation);
+// Writes: ADMIN and HEAD_ADMIN both manage presentations.
+router.post('/', authenticateUser, authorizeRole('ADMIN', 'HEAD_ADMIN'), createPresentation);
+router.put('/:id', authenticateUser, authorizeRole('ADMIN', 'HEAD_ADMIN'), updatePresentation);
 
 module.exports = router;

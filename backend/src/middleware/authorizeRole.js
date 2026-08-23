@@ -1,7 +1,8 @@
 const AppError = require('../utils/AppError');
 
-// Use after requireAuth: requireRole('admin') or requireRole('admin', 'viewer').
-function requireRole(...allowedRoles) {
+// Use after authenticateUser: authorizeRole('HEAD_ADMIN') or
+// authorizeRole('ADMIN', 'HEAD_ADMIN').
+function authorizeRole(...allowedRoles) {
   return function checkRole(req, res, next) {
     if (!req.user) {
       return next(new AppError('Authentication required', 401));
@@ -13,4 +14,4 @@ function requireRole(...allowedRoles) {
   };
 }
 
-module.exports = requireRole;
+module.exports = authorizeRole;

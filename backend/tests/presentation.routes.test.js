@@ -5,28 +5,28 @@ const { db, resetDb, closeDb } = require('./helpers/db');
 const { User } = db;
 
 let adminToken;
-let viewerToken;
+let userToken;
 
 beforeAll(async () => {
   await resetDb();
-  await User.create({ name: 'Admin', email: 'admin@example.com', password: 'correct-horse', role: 'admin' });
-  await User.create({ name: 'Viewer', email: 'viewer@example.com', password: 'correct-horse', role: 'viewer' });
+  await User.create({ name: 'Admin', email: 'admin@example.com', passwordHash: 'correct-horse', role: 'ADMIN' });
+  await User.create({ name: 'User', email: 'user@example.com', passwordHash: 'correct-horse', role: 'USER' });
 
   const adminLogin = await request(app)
     .post('/api/auth/login')
     .send({ email: 'admin@example.com', password: 'correct-horse' });
   adminToken = adminLogin.body.token;
 
-  const viewerLogin = await request(app)
+  const userLogin = await request(app)
     .post('/api/auth/login')
-    .send({ email: 'viewer@example.com', password: 'correct-horse' });
-  viewerToken = viewerLogin.body.token;
+    .send({ email: 'user@example.com', password: 'correct-horse' });
+  userToken = userLogin.body.token;
 });
 
 afterAll(() => closeDb());
 
 const asAdmin = (req) => req.set('Authorization', `Bearer ${adminToken}`);
-const asViewer = (req) => req.set('Authorization', `Bearer ${viewerToken}`);
+const asUser = (req) => req.set('Authorization', `Bearer ${userToken}`);
 
 const validPayload = (overrides = {}) => ({
   title: 'Planning Presentation',
@@ -44,7 +44,7 @@ describe('POST /api/presentations', () => {
   });
 
   test('rejects a non-admin request with 403', async () => {
-    const res = await asViewer(request(app).post('/api/presentations')).send(validPayload());
+    const res = await asUser(request(app).post('/api/presentations')).send(validPayload());
     expect(res.status).toBe(403);
   });
 
@@ -158,7 +158,7 @@ describe('GET /api/presentations visibility', () => {
       validPayload({ title: 'Viewer Cannot Touch', version: '1.0' })
     );
 
-    const res = await asViewer(request(app).put(`/api/presentations/${draft.body.presentation.id}`)).send({
+    const res = await asUser(request(app).put(`/api/presentations/${draft.body.presentation.id}`)).send({
       published: true,
     });
     expect(res.status).toBe(403);

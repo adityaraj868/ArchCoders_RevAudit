@@ -167,10 +167,15 @@ without them rather than silently falling back to an insecure default.
 
 ## 7. Install dependencies and run migrations
 
+`sequelize-cli` (needed for `npm run migrate`) is a devDependency, so this
+has to be a full `npm ci`, not `--omit=dev` — the extra dev packages
+(`jest`, `nodemon`, etc.) are harmless to have installed on a small
+deployment like this:
+
 ```bash
-npm ci --omit=dev
+npm ci
 npm run migrate
-ADMIN_NAME="Dr. Sukhpal Singh" ADMIN_EMAIL="admin@<API_DOMAIN>" ADMIN_PASSWORD="<a-strong-password>" npm run create-admin
+HEAD_ADMIN_NAME="Dr. Sukhpal Singh" HEAD_ADMIN_EMAIL="admin@<API_DOMAIN>" HEAD_ADMIN_PASSWORD="<a-strong-password>" npm run seed-admin
 ```
 
 ## 8. Run the backend once, directly, to confirm it works

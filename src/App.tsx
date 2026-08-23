@@ -33,6 +33,7 @@ import {
 } from './api/presentations';
 import { uploadFiles } from './api/files';
 import { getDashboard, type AdminDashboard } from './api/admin';
+import { listUsers, createUser, changeUserRole, removeUser, type ManagedUser } from './api/users';
 
 // ----------------------------------------------------
 // PROJECT CURRENT PHASE CONFIGURATION
@@ -1609,6 +1610,20 @@ function AdminPage() {
   const [dashboard, setDashboard] = useState<AdminDashboard | null>(null);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
 
+  // User management — HEAD_ADMIN only, backend enforces this regardless of
+  // what the UI shows.
+  const [users, setUsers] = useState<ManagedUser[]>([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [usersError, setUsersError] = useState<string | null>(null);
+  const [userActionError, setUserActionError] = useState<string | null>(null);
+  const [showCreateUserForm, setShowCreateUserForm] = useState(false);
+  const [newUserName, setNewUserName] = useState('');
+  const [newUserEmail, setNewUserEmail] = useState('');
+  const [newUserPassword, setNewUserPassword] = useState('');
+  const [newUserRole, setNewUserRole] = useState<'ADMIN' | 'USER'>('ADMIN');
+  const [createUserError, setCreateUserError] = useState<string | null>(null);
+  const [createUserLoading, setCreateUserLoading] = useState(false);
+
   // Upload form + real (not simulated) publish flow
   const [uploadState, setUploadState] = useState<UploadState>('READY');
   const [uploadStep, setUploadStep] = useState(0);
@@ -1637,12 +1652,69 @@ function AdminPage() {
 
   // Load dashboard stats once logged in.
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser || currentUser.role === 'USER') return;
     setDashboardError(null);
     getDashboard()
       .then(setDashboard)
       .catch((err) => setDashboardError(err instanceof Error ? err.message : 'Failed to load dashboard'));
   }, [currentUser]);
+
+  const refreshUsers = async () => {
+    try {
+      setUsersError(null);
+      setUsers(await listUsers());
+    } catch (err) {
+      setUsersError(err instanceof Error ? err.message : 'Failed to load users');
+    }
+  };
+
+  // Only a HEAD_ADMIN ever sees this data — the backend enforces the same
+  // gate independently, this is just what decides whether the frontend asks.
+  useEffect(() => {
+    if (currentUser?.role !== 'HEAD_ADMIN') return;
+    setUsersLoading(true);
+    refreshUsers().finally(() => setUsersLoading(false));
+  }, [currentUser]);
+
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCreateUserError(null);
+    setCreateUserLoading(true);
+    try {
+      await createUser({ name: newUserName, email: newUserEmail, password: newUserPassword, role: newUserRole });
+      setNewUserName('');
+      setNewUserEmail('');
+      setNewUserPassword('');
+      setNewUserRole('ADMIN');
+      setShowCreateUserForm(false);
+      await refreshUsers();
+    } catch (err) {
+      setCreateUserError(err instanceof Error ? err.message : 'Failed to create user');
+    } finally {
+      setCreateUserLoading(false);
+    }
+  };
+
+  const handleChangeRole = async (id: string, role: 'ADMIN' | 'USER') => {
+    setUserActionError(null);
+    try {
+      await changeUserRole(id, role);
+      await refreshUsers();
+    } catch (err) {
+      setUserActionError(err instanceof Error ? err.message : 'Failed to change role');
+    }
+  };
+
+  const handleRemoveUser = async (id: string, email: string) => {
+    if (!window.confirm(`Remove ${email}? This cannot be undone.`)) return;
+    setUserActionError(null);
+    try {
+      await removeUser(id);
+      await refreshUsers();
+    } catch (err) {
+      setUserActionError(err instanceof Error ? err.message : 'Failed to remove user');
+    }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1827,6 +1899,12 @@ function AdminPage() {
               </button>
             </div>
           </form>
+        ) : currentUser.role === 'USER' ? (
+          <div className="py-12 text-center relative z-20 space-y-2">
+            <AlertTriangle className="mx-auto text-[#ffb847]" size={28} />
+            <div className="text-[#ffb847] font-press-start text-xs">NO ADMIN ACCESS</div>
+            <p className="text-[10px] text-[#6b7280]">Your account is a standard USER — this portal is for admins only.</p>
+          </div>
         ) : (
           <div className="space-y-8 relative z-20">
             {/* Dashboard */}
@@ -1853,6 +1931,153 @@ function AdminPage() {
                 </div>
               )}
             </div>
+
+            {/* User management — HEAD_ADMIN only */}
+            {currentUser.role === 'HEAD_ADMIN' && (
+              <div className="border-t border-[#00ffff]/20 pt-6 space-y-4">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="text-[#00ffff] font-semibold">user@archcoders-admin:~$ users</div>
+                  <button
+                    onClick={() => setShowCreateUserForm((v) => !v)}
+                    className="px-3 py-1.5 border border-[#00ffff] text-[#00ffff] hover:bg-[#00ffff] hover:text-black font-press-start text-[9px] transition-colors"
+                  >
+                    {showCreateUserForm ? 'CANCEL' : '+ CREATE ADMIN'}
+                  </button>
+                </div>
+
+                {showCreateUserForm && (
+                  <form onSubmit={handleCreateUser} className="space-y-3 border border-[#00ffff]/30 p-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="flex flex-col space-y-1">
+                        <label className="text-[#00ffff] uppercase text-[10px] font-press-start">Name</label>
+                        <input
+                          type="text"
+                          value={newUserName}
+                          onChange={(e) => setNewUserName(e.target.value)}
+                          className="bg-[#0c0c1e] border-2 border-[#2121de] px-3 py-2 text-[#fdfdcb] focus:outline-none focus:border-[#00ffff]"
+                          required
+                        />
+                      </div>
+                      <div className="flex flex-col space-y-1">
+                        <label className="text-[#00ffff] uppercase text-[10px] font-press-start">Email</label>
+                        <input
+                          type="email"
+                          value={newUserEmail}
+                          onChange={(e) => setNewUserEmail(e.target.value)}
+                          className="bg-[#0c0c1e] border-2 border-[#2121de] px-3 py-2 text-[#fdfdcb] focus:outline-none focus:border-[#00ffff]"
+                          required
+                        />
+                      </div>
+                      <div className="flex flex-col space-y-1">
+                        <label className="text-[#00ffff] uppercase text-[10px] font-press-start">Password</label>
+                        <input
+                          type="password"
+                          value={newUserPassword}
+                          onChange={(e) => setNewUserPassword(e.target.value)}
+                          className="bg-[#0c0c1e] border-2 border-[#2121de] px-3 py-2 text-[#fdfdcb] focus:outline-none focus:border-[#00ffff]"
+                          required
+                        />
+                      </div>
+                      <div className="flex flex-col space-y-1">
+                        <label className="text-[#00ffff] uppercase text-[10px] font-press-start">Role</label>
+                        <select
+                          value={newUserRole}
+                          onChange={(e) => setNewUserRole(e.target.value as 'ADMIN' | 'USER')}
+                          className="bg-[#0c0c1e] border-2 border-[#2121de] px-3 py-2 text-[#fdfdcb] focus:outline-none focus:border-[#00ffff]"
+                        >
+                          <option value="ADMIN">ADMIN</option>
+                          <option value="USER">USER</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {createUserError && (
+                      <div className="flex items-start gap-2 text-[#ff0000] text-[10px] border border-[#ff0000]/40 bg-[#ff0000]/5 p-3">
+                        <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
+                        <span>{createUserError}</span>
+                      </div>
+                    )}
+
+                    <div className="flex justify-end">
+                      <button
+                        type="submit"
+                        disabled={createUserLoading}
+                        className="flex items-center gap-2 px-4 py-2 border-2 border-[#00ffff] text-[#00ffff] hover:bg-[#00ffff] hover:text-black font-press-start text-[9px] tracking-wider transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {createUserLoading && <Loader2 size={12} className="animate-spin" />}
+                        {createUserLoading ? 'CREATING...' : 'CREATE USER'}
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                {userActionError && <div className="text-[#ff0000] text-[10px]">{userActionError}</div>}
+
+                {usersLoading ? (
+                  <div className="text-[#6b7280] text-[10px] animate-pulse">LOADING USERS...</div>
+                ) : usersError ? (
+                  <div className="text-[#ff0000] text-[10px]">FAILED TO LOAD USERS: {usersError}</div>
+                ) : (
+                  <div className="overflow-x-auto border border-[#2121de]">
+                    <table className="w-full text-left text-[10px] font-sans">
+                      <thead>
+                        <tr className="border-b border-[#2121de] text-[#ffeb3b] font-press-start text-[8px]">
+                          <th className="p-2">NAME</th>
+                          <th className="p-2">EMAIL</th>
+                          <th className="p-2">ROLE</th>
+                          <th className="p-2 text-center">ACTIONS</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {users.map((u) => (
+                          <tr key={u.id} className="border-b border-[#2121de]/40">
+                            <td className="p-2 text-white">{u.name}</td>
+                            <td className="p-2 text-[#fdfdcb]/80 break-all">{u.email}</td>
+                            <td className="p-2">
+                              <span
+                                className={`font-press-start text-[8px] ${
+                                  u.role === 'HEAD_ADMIN'
+                                    ? 'text-[#ffeb3b]'
+                                    : u.role === 'ADMIN'
+                                      ? 'text-[#00ffff]'
+                                      : 'text-[#6b7280]'
+                                }`}
+                              >
+                                {u.role}
+                              </span>
+                            </td>
+                            <td className="p-2">
+                              {u.role === 'HEAD_ADMIN' ? (
+                                <div className="text-[8px] text-[#6b7280] font-press-start text-center">PROTECTED</div>
+                              ) : (
+                                <div className="flex items-center justify-center gap-2 flex-wrap">
+                                  <select
+                                    value={u.role}
+                                    onChange={(e) => handleChangeRole(u.id, e.target.value as 'ADMIN' | 'USER')}
+                                    className="bg-[#0c0c1e] border border-[#2121de] text-[#fdfdcb] text-[9px] px-1 py-0.5 focus:outline-none focus:border-[#00ffff]"
+                                  >
+                                    <option value="ADMIN">ADMIN</option>
+                                    <option value="USER">USER</option>
+                                  </select>
+                                  {u.id !== currentUser.id && (
+                                    <button
+                                      onClick={() => handleRemoveUser(u.id, u.email)}
+                                      className="px-2 py-1 border border-[#ff0000] text-[#ff0000] hover:bg-[#ff0000] hover:text-black font-press-start text-[8px] transition-colors"
+                                    >
+                                      REMOVE
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="border-t border-[#00ffff]/20 pt-6">
               {uploadState === 'READY' && (

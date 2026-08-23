@@ -2,7 +2,7 @@ const { verifyAccessToken } = require('../utils/jwt');
 const { User } = require('../models');
 const asyncHandler = require('../utils/asyncHandler');
 
-// Like requireAuth, but for routes that are public by default and only
+// Like authenticateUser, but for routes that are public by default and only
 // change behavior *if* the caller happens to be an authenticated admin
 // (e.g. seeing unpublished drafts). A missing or invalid token is not an
 // error here — the request just proceeds as anonymous.

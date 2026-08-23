@@ -9,8 +9,8 @@ beforeAll(async () => {
   creator = await User.create({
     name: 'Dheeraj Kumar',
     email: 'creator@example.com',
-    password: 'correct-horse',
-    role: 'admin',
+    passwordHash: 'correct-horse',
+    role: 'ADMIN',
   });
 });
 

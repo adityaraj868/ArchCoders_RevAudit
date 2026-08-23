@@ -3,7 +3,7 @@ const AppError = require('../utils/AppError');
 const storageService = require('./storage');
 
 function isAdmin(user) {
-  return Boolean(user && user.role === 'admin');
+  return Boolean(user && (user.role === 'ADMIN' || user.role === 'HEAD_ADMIN'));
 }
 
 async function uploadFiles({ presentationId, files, uploadedBy }) {

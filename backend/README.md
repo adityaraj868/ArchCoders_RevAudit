@@ -41,7 +41,7 @@ npm run migrate
 | `npm test` | Run the model test suite against in-memory SQLite |
 | `npm run migrate` | Apply pending migrations to `DATABASE_URL` |
 | `npm run migrate:undo` | Roll back the most recent migration |
-| `npm run create-admin` | Create (or promote) an admin account — see [Authentication](#authentication) |
+| `npm run seed-admin` | Create (or promote) the HEAD_ADMIN account — see [User management](#user-management--role-hierarchy) |
 
 ## Folder structure
 
@@ -54,12 +54,12 @@ backend/
 │   │   ├── env.js          # loads & validates environment variables
 │   │   ├── database.js     # Sequelize config per NODE_ENV (dev/test/prod)
 │   │   └── db.js           # exports the Sequelize instance + a health check
-│   ├── controllers/         # auth, admin, presentation, file, health
+│   ├── controllers/         # auth, admin, user, presentation, file, health
 │   ├── routes/              # Express routers, mounted under /api
-│   ├── models/              # Sequelize models: User, Presentation, File
+│   ├── models/              # Sequelize models: User, Presentation, File, AuditLog
 │   ├── middleware/
-│   │   ├── requireAuth.js         # verifies the JWT, loads the user, sets req.user
-│   │   ├── requireRole.js         # role gate, used after requireAuth
+│   │   ├── authenticateUser.js    # verifies the JWT, loads the user, sets req.user
+│   │   ├── authorizeRole.js       # role gate, used after authenticateUser
 │   │   ├── attachUserIfPresent.js # optional-auth: never blocks, just identifies admins
 │   │   ├── upload.js              # multer config: memory storage, size/type limits
 │   │   ├── rateLimit.js           # throttles /auth/login and /auth/register
@@ -67,6 +67,7 @@ backend/
 │   │   └── notFound.js
 │   ├── services/
 │   │   ├── auth.service.js         # register/login business logic
+│   │   ├── user.service.js         # HEAD_ADMIN user-management + audit logging
 │   │   ├── presentation.service.js # version create/list/get/update rules
 │   │   ├── file.service.js         # links an upload to a presentation
 │   │   └── storage/                # storage abstraction — see below
@@ -78,10 +79,10 @@ backend/
 │       ├── AppError.js       # operational-error class for controllers to throw
 │       ├── asyncHandler.js   # forwards async controller rejections to next()
 │       └── jwt.js            # signs/verifies access tokens
-├── migrations/               # sequelize-cli migrations (users, presentations, files)
+├── migrations/               # sequelize-cli migrations (users, presentations, files, audit_logs, role hierarchy)
 ├── seeders/                  # sequelize-cli seed data (empty for now)
 ├── scripts/
-│   └── create-admin.js        # the only way to create an admin account
+│   └── seed-admin.js          # the only way to create a HEAD_ADMIN account
 ├── tests/                    # Jest suite, run against in-memory SQLite
 ├── .sequelizerc              # points sequelize-cli at the folders above
 ├── package.json
@@ -97,7 +98,7 @@ otherwise so the server can start with zero configuration in development.
 
 ## Database layer
 
-Three Sequelize models, one Postgres schema in production:
+Four Sequelize models, one Postgres schema in production:
 
 ### User
 
@@ -105,11 +106,34 @@ Three Sequelize models, one Postgres schema in production:
 |---|---|---|
 | `name` | string | required, 2–100 chars |
 | `email` | string | required, unique, valid email, lowercased on save |
-| `password` | string | required, 8–100 chars — **hashed with bcrypt before save**, never returned by a default query |
-| `role` | enum | `admin` \| `viewer`, defaults to `viewer` |
+| `passwordHash` | string | required, 8–100 chars **as submitted** — **hashed with bcrypt before save**, never returned by a default query |
+| `role` | enum | `HEAD_ADMIN` \| `ADMIN` \| `USER`, defaults to `USER` |
+| `createdBy` | UUID | nullable, self-referential FK to `users.id` — who created this account (`null` for self-registered USERs and the seeded HEAD_ADMIN) |
 
-`User.scope('withPassword')` is required to read the hash back (e.g. for a
-future login endpoint) — every other query gets it stripped automatically.
+`User.scope('withPassword')` is required to read the hash back (e.g. for
+login) — every other query gets it stripped automatically.
+
+**HEAD_ADMIN is structurally protected**, not just by the API: a
+`beforeUpdate` hook rejects *any* attempt to change a HEAD_ADMIN's `role`,
+and a `beforeDestroy` hook rejects deleting one — both fire regardless of
+which code path triggered the change, the same defense-in-depth pattern
+used to protect published `Presentation` rows.
+
+### AuditLog
+
+Append-only — nothing in the application ever updates or deletes a row here.
+
+| Field | Type | Rules |
+|---|---|---|
+| `action` | enum | `CREATE_USER` \| `CHANGE_ROLE` \| `DELETE_USER` |
+| `performedBy` | UUID | nullable FK to `users.id` (the actor) |
+| `targetUser` | UUID | nullable FK to `users.id` (who the action was about) |
+| `details` | JSON | e.g. `{ from: 'USER', to: 'ADMIN' }` for a role change |
+| `timestamp` | date | defaults to now |
+
+Both FKs are `ON DELETE SET NULL` — deleting a user later doesn't delete
+the history of what they did or what was done to them, it just nulls the
+reference.
 
 ### Presentation
 
@@ -162,6 +186,9 @@ real JS array.
 ```
 User (1) ──< (N) Presentation   via presentations.created_by
 User (1) ──< (N) File           via files.uploaded_by
+User (1) ──< (N) User           via users.created_by (who created whom)
+User (1) ──< (N) AuditLog       via audit_logs.performed_by
+User (1) ──< (N) AuditLog       via audit_logs.target_user
 Presentation (1) ──< (N) File   via files.presentation_id
 ```
 
@@ -185,32 +212,42 @@ storage engine underneath is the only thing that differs.
 
 JWT-based, stateless — no session table, no refresh tokens yet. A successful
 login/register returns a signed access token (`JWT_EXPIRES_IN`, default 1
-hour) that the client sends back as `Authorization: Bearer <token>`.
+hour, payload includes `role`) that the client sends back as
+`Authorization: Bearer <token>`.
 
-**There is no way to create an admin account through the API.**
-`POST /api/auth/register` always creates a `viewer`, even if the request
-body includes `"role": "admin"` — the field is ignored server-side. This is
-deliberate: a public endpoint must never be able to self-grant elevated
-access. To create the first admin (or promote an existing user), run:
+**There is no way to create an ADMIN or HEAD_ADMIN account through the
+public API.** `POST /api/auth/register` always creates a `USER`, even if
+the request body includes `"role": "ADMIN"` or `"role": "HEAD_ADMIN"` — the
+field is ignored server-side. This is deliberate: a public endpoint must
+never be able to self-grant elevated access. Elevated accounts only ever
+come from a HEAD_ADMIN via `POST /api/admin/users` (see
+[User management](#user-management--role-hierarchy)) — and HEAD_ADMIN
+itself only ever comes from the seed script:
 
 ```bash
-ADMIN_NAME="Dr. Sukhpal Singh" \
-ADMIN_EMAIL="admin@example.com" \
-ADMIN_PASSWORD="a-strong-password" \
-npm run create-admin
+HEAD_ADMIN_EMAIL="admin@example.com" \
+HEAD_ADMIN_PASSWORD="a-strong-password" \
+npm run seed-admin
 ```
+
+`HEAD_ADMIN_NAME` is optional (defaults to `"Head Admin"`). Running this
+against an email that already exists promotes that account to HEAD_ADMIN
+instead of erroring — which is also how an already-deployed database's
+existing `admin` account becomes HEAD_ADMIN, via the role-hierarchy
+migration (see below) rather than needing this script re-run.
 
 ### How a request gets authorized
 
-1. `requireAuth` reads the `Authorization` header, verifies the JWT's
+1. `authenticateUser` reads the `Authorization` header, verifies the JWT's
    signature and expiry, then **re-loads the user from the database** by the
-   token's subject — a deleted account is rejected immediately rather than
-   staying valid until the token expires on its own.
-2. `requireRole('admin')` (or any other role list) runs after `requireAuth`
-   and checks `req.user.role`. `src/routes/admin.routes.js` applies both to
-   every route in the file with a single `router.use(requireAuth,
-   requireRole('admin'))` — a new admin-only route just gets added to that
-   file and inherits the gate automatically.
+   token's subject — a deleted *or role-changed* account stops being valid
+   on its very next request, rather than staying valid until the token
+   expires on its own.
+2. `authorizeRole('ADMIN', 'HEAD_ADMIN')` (or any other role list) runs
+   after `authenticateUser` and checks `req.user.role`. Route files apply
+   both with a single `router.use(authenticateUser, authorizeRole(...))` —
+   a new route just gets added to the file and inherits the gate
+   automatically.
 3. Login and register are both rate-limited (10 requests / 15 minutes / IP)
    against credential stuffing and account-creation spam.
 
@@ -218,10 +255,56 @@ npm run create-admin
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| `POST` | `/api/auth/register` | none | Create an account. Always `role: "viewer"` regardless of request body. |
+| `POST` | `/api/auth/register` | none | Create an account. Always `role: "USER"` regardless of request body. |
 | `POST` | `/api/auth/login` | none | `{ email, password }` → `{ user, token }`. Same `401` message whether the email doesn't exist or the password is wrong. |
 | `GET` | `/api/auth/me` | any valid token | Returns the authenticated user's own profile. |
-| `GET` | `/api/admin/dashboard` | token + `admin` role | Presentation counts (total/published/draft) — proves the auth chain protects a real, DB-backed route. |
+| `GET` | `/api/admin/dashboard` | token + `ADMIN`/`HEAD_ADMIN` | Presentation counts (total/published/draft) — proves the auth chain protects a real, DB-backed route. |
+
+## User management & role hierarchy
+
+Three roles, strictly ordered:
+
+| Role | Dashboard | Manage presentations/files | Manage users | Notes |
+|---|---|---|---|---|
+| `HEAD_ADMIN` | ✅ | ✅ | ✅ (create ADMIN/USER, change roles, remove) | Exactly one in practice; seeded, never created via the API; cannot be deleted or demoted, by anyone, including itself |
+| `ADMIN` | ✅ | ✅ | ❌ | Created only by a HEAD_ADMIN |
+| `USER` | ❌ | ❌ | ❌ | Default role for public registration; ordinary application access only |
+
+### Endpoints — all under `/api/admin/users`, all HEAD_ADMIN-only
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/api/admin/users` | Create a user. `{ name, email, password, role }` — `role` must be `ADMIN` or `USER`; `HEAD_ADMIN` is rejected with `400` even for the actual HEAD_ADMIN, since this endpoint is never how that role comes to exist. `createdBy` is always the caller. |
+| `GET` | `/api/admin/users` | List every user (all roles, all accounts). |
+| `PATCH` | `/api/admin/users/:id/role` | Change a user's role to `ADMIN` or `USER`. `403` if the target is a HEAD_ADMIN — that role can't be changed by this route, full stop. |
+| `DELETE` | `/api/admin/users/:id` | Remove a user. `400` if you target your own account, `403` if the target is a HEAD_ADMIN, `404` if the id doesn't exist. |
+
+Every one of these is checked at two independent layers: the service
+(`src/services/user.service.js`) rejects the HEAD_ADMIN-related cases with
+a clear `AppError` before touching the database, and the `User` model's own
+hooks (above) would reject the same thing again even if some other code
+path tried to bypass the service.
+
+### Privilege-escalation guards, explicitly
+
+- Registration ignores any `role` in the request body (already covered above).
+- `POST /api/admin/users` and `PATCH .../role` both validate the role
+  against an explicit allow-list (`ADMIN`, `USER`) — there is no way to
+  reach `HEAD_ADMIN` through either endpoint, closing off "promote myself
+  to HEAD_ADMIN via a role change" as a path entirely.
+- `authenticateUser` re-checks the database every request, so a demoted
+  admin's existing token stops granting admin access on their very next
+  request — not just the next time they log in.
+
+### Audit log
+
+Every `CREATE_USER`, `CHANGE_ROLE`, and `DELETE_USER` writes one
+`AuditLog` row (see [Database layer → AuditLog](#auditlog)) before the
+underlying change is made — for a deletion, this means the log captures
+who was deleted and their role even though the `users` row itself is gone
+a moment later. There's no read endpoint for this table yet; it exists to
+be queried directly (`psql`, or a future admin UI) rather than through the
+API.
 
 ## Presentation management
 
@@ -245,10 +328,10 @@ enforces this at the data layer.
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| `POST` | `/api/presentations` | token + `admin` role | Create a new version. `title`, `version`, `date`, `authors` required; `changeSummary` and `published` optional. `createdBy` is always the caller, never taken from the body. |
+| `POST` | `/api/presentations` | token + `ADMIN`/`HEAD_ADMIN` | Create a new version. `title`, `version`, `date`, `authors` required; `changeSummary` and `published` optional. `createdBy` is always the caller, never taken from the body. |
 | `GET` | `/api/presentations` | public (optional) | List versions — published-only unless the caller is an admin. |
 | `GET` | `/api/presentations/:id` | public (optional) | Fetch one version. |
-| `PUT` | `/api/presentations/:id` | token + `admin` role | Update `authors`, `date`, `changeSummary`, or `published`. Any `title`/`version` in the body is silently ignored — see below. Fails with `409` if the version is already published. |
+| `PUT` | `/api/presentations/:id` | token + `ADMIN`/`HEAD_ADMIN` | Update `authors`, `date`, `changeSummary`, or `published`. Any `title`/`version` in the body is silently ignored — see below. Fails with `409` if the version is already published. |
 
 There is deliberately **no `DELETE` route** — nothing about this feature
 ever removes a version.
@@ -329,7 +412,7 @@ frontend without making anything world-readable.
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| `POST` | `/api/files/upload` | token + `admin` role | Multipart upload. Field `presentationId` (required) plus one or more files under the field name `files`. Response includes a fresh `url` per file. |
+| `POST` | `/api/files/upload` | token + `ADMIN`/`HEAD_ADMIN` | Multipart upload. Field `presentationId` (required) plus one or more files under the field name `files`. Response includes a fresh `url` per file. |
 | `GET` | `/api/files/:id/url` | public (optional) | Mint a fresh signed URL for one file. Same visibility rule as presentations: resolvable by anyone if the file's presentation is published, admin-only otherwise. Not cached — S3 signed URLs expire, so this is a live lookup every time. |
 
 Request shape (`multipart/form-data`):
@@ -414,10 +497,11 @@ its full stack trace.
 
 ## Not implemented yet
 
-Auth, the database layer, presentation version management, and file upload
-(local disk or S3) are done. Still missing: refresh tokens / logout
-revocation (the current access token can't be invalidated before it expires
-— there's no session table yet, unlike the fuller design in the system
-architecture plan), and a CloudFront-fronted public URL for S3 objects (the
-signed URLs work today but bypass the CDN layer the AWS architecture plan
-calls for).
+Auth, role-based user management, the database layer, presentation version
+management, and file upload (local disk or S3) are done. Still missing:
+refresh tokens / logout revocation (the current access token can't be
+invalidated before it expires — there's no session table yet, unlike the
+fuller design in the system architecture plan), a read endpoint for the
+audit log (it's queryable directly in the database today, not through the
+API), and a CloudFront-fronted public URL for S3 objects (the signed URLs
+work today but bypass the CDN layer the AWS architecture plan calls for).

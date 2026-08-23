@@ -1,12 +1,13 @@
 const { Router } = require('express');
 const { getDashboard } = require('../controllers/admin.controller');
-const requireAuth = require('../middleware/requireAuth');
-const requireRole = require('../middleware/requireRole');
+const authenticateUser = require('../middleware/authenticateUser');
+const authorizeRole = require('../middleware/authorizeRole');
 
 const router = Router();
 
-// Every route in this file requires a valid token AND the admin role.
-router.use(requireAuth, requireRole('admin'));
+// ADMIN and HEAD_ADMIN both get the dashboard — user management (mounted
+// separately at /admin/users) is the one thing reserved to HEAD_ADMIN alone.
+router.use(authenticateUser, authorizeRole('ADMIN', 'HEAD_ADMIN'));
 
 router.get('/dashboard', getDashboard);
 

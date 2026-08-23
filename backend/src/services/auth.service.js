@@ -8,8 +8,9 @@ function toSafeUser(user) {
 
 async function register({ name, email, password }) {
   // `role` is intentionally never accepted from the request body — public
-  // registration must never be able to self-grant the admin role.
-  const user = await User.create({ name, email, password, role: 'viewer' });
+  // registration must never be able to self-grant ADMIN or HEAD_ADMIN.
+  // Elevated accounts only ever come from POST /api/admin/users.
+  const user = await User.create({ name, email, passwordHash: password, role: 'USER' });
   return { user: toSafeUser(user), token: signAccessToken(user) };
 }
 

@@ -7,7 +7,7 @@ const { User } = require('../models');
 // than trusting the token's payload alone — a deleted or role-changed
 // account is rejected immediately instead of staying valid until the token
 // expires.
-const requireAuth = asyncHandler(async (req, res, next) => {
+const authenticateUser = asyncHandler(async (req, res, next) => {
   const header = req.headers.authorization || '';
   const [scheme, token] = header.split(' ');
 
@@ -31,4 +31,4 @@ const requireAuth = asyncHandler(async (req, res, next) => {
   next();
 });
 
-module.exports = requireAuth;
+module.exports = authenticateUser;

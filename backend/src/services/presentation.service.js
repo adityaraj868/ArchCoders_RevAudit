@@ -8,7 +8,7 @@ const AppError = require('../utils/AppError');
 const MUTABLE_FIELDS = ['authors', 'date', 'changeSummary', 'published'];
 
 function isAdmin(user) {
-  return Boolean(user && user.role === 'admin');
+  return Boolean(user && (user.role === 'ADMIN' || user.role === 'HEAD_ADMIN'));
 }
 
 async function create({ title, version, date, authors, changeSummary, published }, createdBy) {

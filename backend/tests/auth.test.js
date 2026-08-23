@@ -8,7 +8,7 @@ beforeAll(() => resetDb());
 afterAll(() => closeDb());
 
 async function createAdmin(email = 'admin@example.com') {
-  return User.create({ name: 'Dheeraj Kumar', email, password: 'correct-horse', role: 'admin' });
+  return User.create({ name: 'Dheeraj Kumar', email, passwordHash: 'correct-horse', role: 'ADMIN' });
 }
 
 describe('POST /api/auth/register', () => {
@@ -22,19 +22,19 @@ describe('POST /api/auth/register', () => {
     expect(res.status).toBe(201);
     expect(res.body.token).toBeDefined();
     expect(res.body.user.email).toBe('sparsh@example.com');
-    expect(res.body.user.password).toBeUndefined();
+    expect(res.body.user.passwordHash).toBeUndefined();
   });
 
-  test('never allows the client to self-grant the admin role', async () => {
+  test('never allows the client to self-grant ADMIN or HEAD_ADMIN', async () => {
     const res = await request(app).post('/api/auth/register').send({
       name: 'Trying To Escalate',
       email: 'escalate@example.com',
       password: 'correct-horse',
-      role: 'admin',
+      role: 'HEAD_ADMIN',
     });
 
     expect(res.status).toBe(201);
-    expect(res.body.user.role).toBe('viewer');
+    expect(res.body.user.role).toBe('USER');
   });
 
   test('rejects a duplicate email with 409', async () => {
@@ -66,7 +66,7 @@ describe('POST /api/auth/login', () => {
     expect(res.status).toBe(200);
     expect(res.body.token).toBeDefined();
     expect(res.body.user.email).toBe('admin@example.com');
-    expect(res.body.user.role).toBe('admin');
+    expect(res.body.user.role).toBe('ADMIN');
   });
 
   test('wrong password is rejected with 401', async () => {
@@ -113,7 +113,7 @@ describe('Protected routes', () => {
     expect(res.body.user.email).toBe('admin@example.com');
   });
 
-  test('a viewer is blocked from the admin dashboard with 403', async () => {
+  test('a plain USER is blocked from the admin dashboard with 403', async () => {
     const login = await request(app).post('/api/auth/login').send({
       email: 'sparsh@example.com',
       password: 'correct-horse',
@@ -126,7 +126,7 @@ describe('Protected routes', () => {
     expect(res.status).toBe(403);
   });
 
-  test('an admin can reach the admin dashboard', async () => {
+  test('an ADMIN can reach the admin dashboard', async () => {
     const login = await request(app).post('/api/auth/login').send({
       email: 'admin@example.com',
       password: 'correct-horse',

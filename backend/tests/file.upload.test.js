@@ -11,20 +11,20 @@ const { db, resetDb, closeDb } = require('./helpers/db');
 const { User } = db;
 
 let adminToken;
-let viewerToken;
+let userToken;
 let draftId;
 let publishedId;
 
 beforeAll(async () => {
   await resetDb();
-  await User.create({ name: 'Admin', email: 'admin@example.com', password: 'correct-horse', role: 'admin' });
-  await User.create({ name: 'Viewer', email: 'viewer@example.com', password: 'correct-horse', role: 'viewer' });
+  await User.create({ name: 'Admin', email: 'admin@example.com', passwordHash: 'correct-horse', role: 'ADMIN' });
+  await User.create({ name: 'User', email: 'user@example.com', passwordHash: 'correct-horse', role: 'USER' });
 
   adminToken = (
     await request(app).post('/api/auth/login').send({ email: 'admin@example.com', password: 'correct-horse' })
   ).body.token;
-  viewerToken = (
-    await request(app).post('/api/auth/login').send({ email: 'viewer@example.com', password: 'correct-horse' })
+  userToken = (
+    await request(app).post('/api/auth/login').send({ email: 'user@example.com', password: 'correct-horse' })
   ).body.token;
 
   const draft = await request(app)
@@ -61,7 +61,7 @@ describe('POST /api/files/upload', () => {
 
   test('rejects a non-admin request with 403', async () => {
     const res = await attachPdf(
-      request(app).post('/api/files/upload').set('Authorization', `Bearer ${viewerToken}`).field('presentationId', draftId)
+      request(app).post('/api/files/upload').set('Authorization', `Bearer ${userToken}`).field('presentationId', draftId)
     );
     expect(res.status).toBe(403);
   });
