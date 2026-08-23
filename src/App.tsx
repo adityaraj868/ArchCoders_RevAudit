@@ -1277,7 +1277,13 @@ function PresentationDetailPage({ id, navigateTo }: { id: string; navigateTo: (r
     // context — assigning its location after the await below (rather than
     // calling window.open with the resolved URL directly) avoids browsers
     // silently popup-blocking a window.open that happens after an await.
-    const newTab = window.open('', '_blank', 'noopener,noreferrer');
+    // Note: passing 'noopener' here would make window.open() itself return
+    // null (even though it does open the tab), leaving nothing to redirect
+    // later — so opener access is severed manually right after, instead.
+    const newTab = window.open('', '_blank');
+    if (newTab) {
+      newTab.opener = null;
+    }
     try {
       const url = await getFileUrl(fileId);
       if (newTab) {
