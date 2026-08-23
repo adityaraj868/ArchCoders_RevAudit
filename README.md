@@ -44,6 +44,11 @@ The RevAudit project website provides:
 - Static frontend
 - Nginx/Caddy reverse proxy
 
+## Deployment
+
+- [`DEPLOYMENT.md`](DEPLOYMENT.md) — deploying this frontend to AWS (S3 + CloudFront, with a documented S3-static-website fallback).
+- [`backend/DEPLOYMENT.md`](backend/DEPLOYMENT.md) — deploying the backend API to AWS EC2.
+
 ## Development
 
 Clone the repository:
