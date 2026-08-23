@@ -30,6 +30,12 @@ if (env.nodeEnv !== 'test') {
 
 app.use('/api', routes);
 
+// Serves whatever the "local" storage driver has written to disk — matches
+// the "/uploads/..." path localStorageService.getUrl() already returns.
+// A no-op under the "s3" driver: nothing is ever written to this directory,
+// so requests here just 404 rather than doing anything unexpected.
+app.use('/uploads', express.static(env.uploadDir));
+
 app.use(notFound);
 app.use(errorHandler);
 

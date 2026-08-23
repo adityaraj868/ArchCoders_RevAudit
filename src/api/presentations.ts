@@ -1,4 +1,5 @@
 import { apiRequest } from './client';
+import type { UploadedFile } from './files';
 
 export interface Presentation {
   id: string;
@@ -11,6 +12,9 @@ export interface Presentation {
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+  // Only present on GET /presentations/:id — the list endpoint doesn't
+  // include it, since the archive table never shows per-file detail.
+  files?: UploadedFile[];
 }
 
 // Public — the backend itself filters to published-only for anonymous

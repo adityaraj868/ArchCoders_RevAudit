@@ -1,4 +1,4 @@
-import { apiRequest } from './client';
+import { apiRequest, API_ORIGIN } from './client';
 
 export interface UploadedFile {
   id: string;
@@ -25,4 +25,15 @@ export async function uploadFiles(presentationId: string, files: File[]): Promis
     isFormData: true,
   });
   return data.files;
+}
+
+// Resolved on demand, never cached — the backend mints a fresh signed URL
+// per call (S3 URLs expire), so a URL fetched once shouldn't be reused
+// indefinitely.
+export async function getFileUrl(fileId: string): Promise<string> {
+  const data = await apiRequest<{ url: string }>(`/files/${fileId}/url`);
+  // The S3 driver already returns a fully-qualified URL; the local driver
+  // returns a path relative to the API server, which must resolve against
+  // the API's origin, not whatever origin the frontend happens to be on.
+  return /^https?:\/\//.test(data.url) ? data.url : `${API_ORIGIN}${data.url}`;
 }

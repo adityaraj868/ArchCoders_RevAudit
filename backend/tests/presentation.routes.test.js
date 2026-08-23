@@ -164,3 +164,35 @@ describe('GET /api/presentations visibility', () => {
     expect(res.status).toBe(403);
   });
 });
+
+describe('GET /api/presentations/:id includes attached files', () => {
+  test('a presentation with an uploaded file returns it in the response', async () => {
+    const created = await asAdmin(request(app).post('/api/presentations')).send(
+      validPayload({ title: 'Has A File', version: '1.0' })
+    );
+    const id = created.body.presentation.id;
+
+    await asAdmin(request(app).post('/api/files/upload'))
+      .field('presentationId', id)
+      .attach('files', Buffer.from('%PDF-1.4 fake pdf content'), {
+        filename: 'deck.pdf',
+        contentType: 'application/pdf',
+      });
+
+    const res = await asAdmin(request(app).get(`/api/presentations/${id}`));
+
+    expect(res.status).toBe(200);
+    expect(res.body.presentation.files).toHaveLength(1);
+    expect(res.body.presentation.files[0].originalName).toBe('deck.pdf');
+  });
+
+  test('a presentation with no files returns an empty array, not undefined', async () => {
+    const created = await asAdmin(request(app).post('/api/presentations')).send(
+      validPayload({ title: 'No Files Yet', version: '1.0' })
+    );
+
+    const res = await asAdmin(request(app).get(`/api/presentations/${created.body.presentation.id}`));
+
+    expect(res.body.presentation.files).toEqual([]);
+  });
+});

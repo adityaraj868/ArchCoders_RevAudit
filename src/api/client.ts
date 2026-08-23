@@ -1,4 +1,11 @@
-const API_BASE_URL: string = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
+export const API_BASE_URL: string = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
+
+// Derived by dropping the trailing "/api" — lets callers turn a
+// backend-relative path (e.g. the local storage driver's "/uploads/...")
+// into a URL that resolves against the API's own origin rather than the
+// frontend's, which differ whenever the two are hosted separately (as in
+// this app's actual S3 + EC2 deployment).
+export const API_ORIGIN: string = API_BASE_URL.replace(/\/api\/?$/, '');
 
 const TOKEN_KEY = 'revaudit.token';
 

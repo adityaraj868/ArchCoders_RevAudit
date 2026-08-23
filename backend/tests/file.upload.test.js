@@ -192,4 +192,20 @@ describe('GET /api/files/:id/url', () => {
       .set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(404);
   });
+
+  test('the URL the local driver returns is actually servable, not just a path string', async () => {
+    const urlRes = await request(app)
+      .get(`/api/files/${publishedFileId}/url`)
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    // Local driver returns a path relative to the API server, e.g.
+    // "/uploads/<presentationId>/<filename>" — fetch it directly and
+    // confirm the app actually serves real file bytes there, not a 404.
+    // (supertest leaves application/pdf unparsed in `.text`/`.body`, so
+    // Content-Length is the reliable signal that real bytes came back.)
+    const fileRes = await request(app).get(urlRes.body.url);
+    expect(fileRes.status).toBe(200);
+    expect(fileRes.headers['content-type']).toMatch(/application\/pdf/);
+    expect(Number(fileRes.headers['content-length'])).toBeGreaterThan(0);
+  });
 });

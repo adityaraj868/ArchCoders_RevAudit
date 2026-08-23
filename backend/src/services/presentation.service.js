@@ -35,7 +35,9 @@ async function list(requester) {
 }
 
 async function getById(id, requester) {
-  const presentation = await Presentation.findByPk(id);
+  const presentation = await Presentation.findByPk(id, {
+    include: { association: 'files' },
+  });
 
   // Same 404 whether the row doesn't exist or it's an unpublished draft a
   // non-admin has no business seeing — don't confirm a draft's existence to

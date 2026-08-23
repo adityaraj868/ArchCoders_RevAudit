@@ -29,9 +29,10 @@ import {
   listPresentations,
   createPresentation,
   publishPresentation,
+  getPresentation,
   type Presentation,
 } from './api/presentations';
-import { uploadFiles } from './api/files';
+import { uploadFiles, getFileUrl } from './api/files';
 import { getDashboard, type AdminDashboard } from './api/admin';
 import { listUsers, createUser, changeUserRole, removeUser, type ManagedUser } from './api/users';
 
@@ -313,14 +314,21 @@ export function RoadmapSection() {
 // ----------------------------------------------------
 // ROUTING CONSTANTS
 // ----------------------------------------------------
-type Route = 
-  | 'home' 
-  | 'project' 
-  | 'team' 
-  | 'presentations' 
-  | 'planning-v1' 
-  | 'architecture' 
+type Route =
+  | 'home'
+  | 'project'
+  | 'team'
+  | 'presentations'
+  | 'planning-v1'
+  | 'presentation-detail'
+  | 'architecture'
   | 'admin';
+
+// Matches a permanent link to an uploaded presentation, e.g.
+// "#/presentations/3f2a1c9e-...". Checked after the literal
+// "#/presentations/planning-v1" route so that pinned page keeps working
+// exactly as before — this pattern only ever catches real database ids.
+const PRESENTATION_DETAIL_HASH = /^#\/presentations\/([^/]+)$/;
 
 const getRouteFromHash = (): Route => {
   const hash = window.location.hash;
@@ -328,9 +336,15 @@ const getRouteFromHash = (): Route => {
   if (hash === '#/team') return 'team';
   if (hash === '#/presentations') return 'presentations';
   if (hash === '#/presentations/planning-v1') return 'planning-v1';
+  if (PRESENTATION_DETAIL_HASH.test(hash)) return 'presentation-detail';
   if (hash === '#/architecture') return 'architecture';
   if (hash === '#/admin') return 'admin';
   return 'home';
+};
+
+const getPresentationIdFromHash = (): string | null => {
+  const match = window.location.hash.match(PRESENTATION_DETAIL_HASH);
+  return match ? decodeURIComponent(match[1]) : null;
 };
 
 const setHashFromRoute = (route: Route) => {
@@ -341,6 +355,7 @@ const setHashFromRoute = (route: Route) => {
 
 export default function App() {
   const [currentRoute, setCurrentRoute] = useState<Route>('home');
+  const [presentationId, setPresentationId] = useState<string | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [crtActive, setCrtActive] = useState(true);
 
@@ -348,6 +363,7 @@ export default function App() {
   useEffect(() => {
     const handleHashChange = () => {
       setCurrentRoute(getRouteFromHash());
+      setPresentationId(getPresentationIdFromHash());
       window.scrollTo(0, 0);
       setMobileMenuOpen(false);
     };
@@ -355,6 +371,7 @@ export default function App() {
     window.addEventListener('hashchange', handleHashChange);
     // Init route
     setCurrentRoute(getRouteFromHash());
+    setPresentationId(getPresentationIdFromHash());
 
     return () => {
       window.removeEventListener('hashchange', handleHashChange);
@@ -363,6 +380,13 @@ export default function App() {
 
   const navigateTo = (route: Route) => {
     setHashFromRoute(route);
+  };
+
+  // A permanent link to one uploaded presentation — not one of the fixed
+  // named routes above, so it bypasses navigateTo/setHashFromRoute and sets
+  // the hash directly.
+  const navigateToPresentation = (id: string) => {
+    window.location.hash = `#/presentations/${id}`;
   };
 
   // Nav Item helper
@@ -458,8 +482,13 @@ export default function App() {
         {currentRoute === 'home' && <HomePage navigateTo={navigateTo} />}
         {currentRoute === 'project' && <ProjectPage />}
         {currentRoute === 'team' && <TeamPage />}
-        {currentRoute === 'presentations' && <PresentationsPage navigateTo={navigateTo} />}
+        {currentRoute === 'presentations' && (
+          <PresentationsPage navigateTo={navigateTo} navigateToPresentation={navigateToPresentation} />
+        )}
         {currentRoute === 'planning-v1' && <PlanningPresentationView />}
+        {currentRoute === 'presentation-detail' && presentationId && (
+          <PresentationDetailPage id={presentationId} navigateTo={navigateTo} />
+        )}
         {currentRoute === 'architecture' && <ArchitecturePage />}
         {currentRoute === 'admin' && <AdminPage />}
       </main>
@@ -1071,7 +1100,13 @@ function TeamPage() {
 // ----------------------------------------------------
 // 4. PRESENTATIONS ARCHIVE PAGE COMPONENT
 // ----------------------------------------------------
-function PresentationsPage({ navigateTo }: { navigateTo: (route: Route) => void }) {
+function PresentationsPage({
+  navigateTo,
+  navigateToPresentation,
+}: {
+  navigateTo: (route: Route) => void;
+  navigateToPresentation: (id: string) => void;
+}) {
   const [presentations, setPresentations] = useState<Presentation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1183,11 +1218,183 @@ function PresentationsPage({ navigateTo }: { navigateTo: (route: Route) => void 
                     </td>
                     <td className="p-4 font-press-start text-[10px]">{p.version}</td>
                     <td className="p-4 text-[#fdfdcb]/80">{p.date}</td>
-                    <td className="p-4 text-center font-press-start text-[8px] text-[#00ff00]">PUBLISHED</td>
+                    <td className="p-4 text-center">
+                      <button
+                        onClick={() => navigateToPresentation(p.id)}
+                        className="px-3 py-1.5 border border-[#ffeb3b] text-[#ffeb3b] hover:bg-[#ffeb3b] hover:text-[#05050d] font-press-start text-[9px] tracking-wider transition-colors cursor-pointer"
+                      >
+                        OPEN
+                      </button>
+                    </td>
                   </tr>
                 ))}
             </tbody>
           </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ----------------------------------------------------
+// 4.5 PRESENTATION DETAIL PAGE COMPONENT
+// Permanent page for one uploaded/published presentation — metadata plus
+// its attached files, each resolvable to a real (signed, on S3; local path,
+// on disk) URL on click.
+// ----------------------------------------------------
+function PresentationDetailPage({ id, navigateTo }: { id: string; navigateTo: (route: Route) => void }) {
+  const [presentation, setPresentation] = useState<Presentation | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [openingFileId, setOpeningFileId] = useState<string | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    getPresentation(id)
+      .then((data) => {
+        if (!cancelled) setPresentation(data);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load this presentation');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  const handleOpenFile = async (fileId: string) => {
+    setFileError(null);
+    setOpeningFileId(fileId);
+    // Opened synchronously, while still inside the click's user-gesture
+    // context — assigning its location after the await below (rather than
+    // calling window.open with the resolved URL directly) avoids browsers
+    // silently popup-blocking a window.open that happens after an await.
+    const newTab = window.open('', '_blank', 'noopener,noreferrer');
+    try {
+      const url = await getFileUrl(fileId);
+      if (newTab) {
+        newTab.location.href = url;
+      } else {
+        setFileError('Your browser blocked the popup. Please allow popups for this site and try again.');
+      }
+    } catch (err) {
+      newTab?.close();
+      setFileError(err instanceof Error ? err.message : 'Failed to open this file');
+    } finally {
+      setOpeningFileId(null);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="py-20 text-center font-press-start text-xs text-[#6b7280] animate-pulse">
+        LOADING PRESENTATION...
+      </div>
+    );
+  }
+
+  if (error || !presentation) {
+    return (
+      <div className="space-y-6 text-center py-20">
+        <AlertTriangle className="mx-auto text-[#ff0000]" size={32} />
+        <div className="font-press-start text-xs text-[#ff0000]">PRESENTATION NOT FOUND</div>
+        <p className="text-xs text-[#6b7280]">{error}</p>
+        <button onClick={() => navigateTo('presentations')} className="arcade-btn">
+          BACK TO ARCHIVE
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-12">
+      <div className="border-b-4 border-[#2121de] pb-4 flex items-center justify-between flex-wrap gap-4">
+        <div>
+          <h1 className="font-press-start text-2xl text-white">{presentation.title}</h1>
+          <p className="font-vt323 text-xl text-[#6b7280] mt-1">
+            Version {presentation.version} — {presentation.date}
+          </p>
+        </div>
+        <button
+          onClick={() => navigateTo('presentations')}
+          className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 border border-[#6b7280] text-[#6b7280] hover:text-white hover:border-white font-press-start text-[9px] transition-colors"
+        >
+          <ArrowLeft size={12} /> BACK TO ARCHIVE
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-2 space-y-8">
+          <div className="arcade-card p-6 space-y-4">
+            <h2 className="font-press-start text-xs text-[#ffeb3b]">CHANGE SUMMARY</h2>
+            <p className="font-sans text-sm leading-relaxed text-[#fdfdcb]">
+              {presentation.changeSummary || 'No change summary provided.'}
+            </p>
+          </div>
+
+          <div className="arcade-card p-6 space-y-4">
+            <h2 className="font-press-start text-xs text-[#00ffff]">ATTACHED FILES</h2>
+
+            {fileError && (
+              <div className="flex items-start gap-2 text-[#ff0000] text-[10px] border border-[#ff0000]/40 bg-[#ff0000]/5 p-3">
+                <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
+                <span>{fileError}</span>
+              </div>
+            )}
+
+            {!presentation.files || presentation.files.length === 0 ? (
+              <p className="font-sans text-xs text-[#6b7280]">No files attached to this version.</p>
+            ) : (
+              <ul className="space-y-2">
+                {presentation.files.map((file) => (
+                  <li key={file.id} className="flex items-center justify-between gap-4 border border-[#2121de] p-3">
+                    <div className="min-w-0">
+                      <div className="text-sm text-white truncate">{file.originalName}</div>
+                      <div className="text-[10px] text-[#6b7280] font-vt323">
+                        {file.type} · {(Number(file.size) / 1024).toFixed(1)} KB
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleOpenFile(file.id)}
+                      disabled={openingFileId === file.id}
+                      className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 border border-[#00ffff] text-[#00ffff] hover:bg-[#00ffff] hover:text-black font-press-start text-[9px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {openingFileId === file.id && <Loader2 size={10} className="animate-spin" />}
+                      {openingFileId === file.id ? 'OPENING...' : 'VIEW / DOWNLOAD'}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          <div className="arcade-card p-6 border-dashed">
+            <h2 className="font-press-start text-xs text-white mb-4">VERSION INFO</h2>
+            <div className="space-y-3 font-sans text-xs text-[#fdfdcb]/80">
+              <div>
+                <span className="text-[#6b7280] font-press-start text-[9px] block mb-1">AUTHORS</span>
+                {presentation.authors.join(', ')}
+              </div>
+              <div>
+                <span className="text-[#6b7280] font-press-start text-[9px] block mb-1">RELEASE DATE</span>
+                {presentation.date}
+              </div>
+              <div>
+                <span className="text-[#6b7280] font-press-start text-[9px] block mb-1">STATUS</span>
+                <span className="text-[#00ff00]">PUBLISHED</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
