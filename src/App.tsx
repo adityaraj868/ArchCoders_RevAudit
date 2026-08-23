@@ -35,6 +35,10 @@ import {
 import { uploadFiles, getFileUrl } from './api/files';
 import { getDashboard, type AdminDashboard } from './api/admin';
 import { listUsers, createUser, changeUserRole, removeUser, type ManagedUser } from './api/users';
+import heroBg from '../design/hero_bg.jpg';
+import ghostLogo from '../design/revaudit_ghost_logo.svg';
+
+
 
 // ----------------------------------------------------
 // PROJECT CURRENT PHASE CONFIGURATION
@@ -421,7 +425,7 @@ export default function App() {
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
           {/* Logo / Wordmark */}
           <div className="flex items-center gap-3 cursor-pointer" onClick={() => navigateTo('home')}>
-            <PacmanIcon className="w-8 h-8 text-[#ffeb3b] animate-bounce" />
+            <img src={ghostLogo} alt="RevAudit Logo" className="h-10 w-auto animate-bounce" />
             <span className="font-press-start text-sm md:text-lg text-white tracking-widest hover:text-[#ffeb3b] transition-colors">
               REVAUDIT
             </span>
@@ -478,19 +482,24 @@ export default function App() {
       {/* ----------------------------------------------------
           MAIN CONTENT ROUTER
           ---------------------------------------------------- */}
-      <main className="flex-1 w-full max-w-6xl mx-auto px-4 py-8">
-        {currentRoute === 'home' && <HomePage navigateTo={navigateTo} />}
-        {currentRoute === 'project' && <ProjectPage />}
-        {currentRoute === 'team' && <TeamPage />}
-        {currentRoute === 'presentations' && (
-          <PresentationsPage navigateTo={navigateTo} navigateToPresentation={navigateToPresentation} />
+      <main className="flex-1 w-full">
+        {currentRoute === 'home' ? (
+          <HomePage navigateTo={navigateTo} />
+        ) : (
+          <div className="max-w-6xl mx-auto px-4 py-8">
+            {currentRoute === 'project' && <ProjectPage />}
+            {currentRoute === 'team' && <TeamPage />}
+            {currentRoute === 'presentations' && (
+              <PresentationsPage navigateTo={navigateTo} navigateToPresentation={navigateToPresentation} />
+            )}
+            {currentRoute === 'planning-v1' && <PlanningPresentationView />}
+            {currentRoute === 'presentation-detail' && presentationId && (
+              <PresentationDetailPage id={presentationId} navigateTo={navigateTo} />
+            )}
+            {currentRoute === 'architecture' && <ArchitecturePage />}
+            {currentRoute === 'admin' && <AdminPage />}
+          </div>
         )}
-        {currentRoute === 'planning-v1' && <PlanningPresentationView />}
-        {currentRoute === 'presentation-detail' && presentationId && (
-          <PresentationDetailPage id={presentationId} navigateTo={navigateTo} />
-        )}
-        {currentRoute === 'architecture' && <ArchitecturePage />}
-        {currentRoute === 'admin' && <AdminPage />}
       </main>
 
       {/* ----------------------------------------------------
@@ -529,13 +538,19 @@ function HomePage({ navigateTo }: { navigateTo: (route: Route) => void }) {
   return (
     <div className="space-y-16">
       {/* Hero Section */}
-      <section className="text-center py-12 md:py-20 relative overflow-hidden">
+      <section 
+        className="text-center flex flex-col justify-center items-center relative overflow-hidden bg-cover bg-center"
+        style={{ 
+          backgroundImage: `linear-gradient(rgba(0, 0, 0, 0.85), rgba(0, 0, 0, 0.85)), url(${heroBg})`,
+          minHeight: 'calc(100vh - 68px)'
+        }}
+      >
         {/* Pellet visual background decorator */}
         <div className="absolute inset-0 flex justify-center items-center opacity-5 pointer-events-none">
           <div className="text-[120px] font-press-start text-[#ffeb3b]">C</div>
         </div>
 
-        <div className="relative z-10 max-w-4xl mx-auto space-y-8">
+        <div className="relative z-10 w-full max-w-4xl mx-auto space-y-8 px-4 py-12 md:py-20">
           <div className="flex justify-center gap-1">
             <PelletIcon />
             <PelletIcon />
@@ -578,8 +593,9 @@ function HomePage({ navigateTo }: { navigateTo: (route: Route) => void }) {
         </div>
       </section>
 
-      {/* Problem Section */}
-      <section className="space-y-8">
+      <div className="max-w-6xl mx-auto px-4 py-8 space-y-16">
+        {/* Problem Section */}
+        <section className="space-y-8">
         <div className="text-center">
           <h2 className="font-press-start text-lg text-white">01 / THE PROBLEM</h2>
           <div className="w-12 h-1 bg-[#ff0000] mx-auto mt-2"></div>
@@ -889,6 +905,7 @@ function HomePage({ navigateTo }: { navigateTo: (route: Route) => void }) {
           </div>
         </div>
       </section>
+      </div>
     </div>
   );
 }

@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <!-- Pac-Man-style ghost -->
+  <path
+    d="M38 174
+       V86
+       C38 49.1 65.9 20 100 20
+       C134.1 20 162 49.1 162 86
+       V174
+       L144 150
+       L123 174
+       L101 150
+       L80 174
+       L59 150
+       Z"
+    fill="#FFE51F"/>
+
+  <!-- Left eye -->
+  <circle cx="78" cy="85" r="20" fill="#FFFFFF"/>
+  <circle cx="78" cy="85" r="8" fill="#333333"/>
+
+  <!-- Right eye -->
+  <circle cx="122" cy="85" r="20" fill="#FFFFFF"/>
+  <circle cx="122" cy="85" r="8" fill="#333333"/>
+</svg>
