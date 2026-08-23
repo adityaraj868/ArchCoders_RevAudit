@@ -4,7 +4,8 @@ Express API server for RevAudit. The server skeleton, database layer, JWT
 authentication, presentation version management, and file upload (to local
 disk or AWS S3, behind a swappable storage abstraction) are implemented. See
 the project's system architecture plan for the full API surface and AWS
-deployment design.
+deployment design, and [`DEPLOYMENT.md`](DEPLOYMENT.md) for the step-by-step
+AWS EC2 deployment runbook.
 
 ## Stack
 
